@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "graphql": "npm:graphql@17.1.0",
+    "postgres": "npm:postgres@3.4.9"
+  }
+}

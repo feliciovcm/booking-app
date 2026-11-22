@@ -1,0 +1,23 @@
+{
+  // Typechecks the runtime-agnostic edge function code (and its tests) with Node's tsc.
+  // index.ts and store.ts use Deno globals and npm: imports, so they're left to Deno.
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.functions.tsbuildinfo",
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["supabase/functions/**/*.ts"],
+  "exclude": ["supabase/functions/**/index.ts", "supabase/functions/**/store.ts"]
+}

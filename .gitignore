@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Edge function secrets for local serve and curl tests
+supabase/functions/.env
