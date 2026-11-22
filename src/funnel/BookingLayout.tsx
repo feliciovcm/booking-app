@@ -1,20 +1,26 @@
-import { Link, Outlet, useLocation, useNavigate } from "react-router";
-import { FUNNEL_STEPS, stepIndex, type FunnelStep } from "./funnel";
+import { Link, Outlet, useLocation } from "react-router";
+import { FUNNEL_STEPS, stepIndex, stepUrl, useFunnel, type FunnelStep } from "./funnel";
 
 export function BookingLayout() {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
+  const { params } = useFunnel();
   const step = pathname.split("/").pop() as FunnelStep;
   const index = stepIndex(step);
   const progress = index >= 0 ? ((index + 1) / FUNNEL_STEPS.length) * 100 : 100;
 
+  // Back goes to the previous step, not browser history: a visitor who deep-linked in
+  // (e.g. "Book PRP" on the marketing site) has no history here, and history(-1) would
+  // take them off the app. Earlier choices stay in the URL, so the step shows them selected.
+  const backTo =
+    index > 0 ? stepUrl(FUNNEL_STEPS[index - 1], params) : index === -1 ? stepUrl("services", params) : null;
+
   return (
     <div className="shell">
       <header className="header">
-        {index > 0 || index === -1 ? (
-          <button type="button" className="back" onClick={() => navigate(-1)} aria-label="Go back">
+        {backTo ? (
+          <Link to={backTo} className="back" aria-label="Go back">
             ←
-          </button>
+          </Link>
         ) : (
           <span className="back" />
         )}

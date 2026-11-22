@@ -73,6 +73,29 @@ describe("booking funnel", () => {
     await waitFor(() => expect(url()).toBe("/book/location?service=prp"));
   });
 
+  it("sends the slot step back to services when the treatment is unknown", async () => {
+    renderAt("/book/slot?service=does-not-exist&location=noho");
+    await waitFor(() => expect(url()).toBe("/book/services"));
+  });
+
+  // Each test starts with a single history entry, like a visitor arriving from a
+  // "Book PRP" link: browser-history back would have nowhere in the app to go.
+  it.each([
+    ["/book/location?service=prp", "/book/services?service=prp"],
+    ["/book/slot?service=prp&location=noho", "/book/location?service=prp&location=noho"],
+    ["/book/call", "/book/services"],
+  ])("back from a deep link to %s goes to %s", async (start, expected) => {
+    renderAt(start);
+    await userEvent.click(await screen.findByRole("link", { name: "Go back" }));
+    expect(url()).toBe(expected);
+  });
+
+  it("has no back button on the first step", async () => {
+    renderAt("/book/services");
+    await screen.findByRole("button", { name: /PRP Hair Restoration/ });
+    expect(screen.queryByRole("link", { name: "Go back" })).not.toBeInTheDocument();
+  });
+
   it("shows a retryable error when treatments fail to load", async () => {
     fake.failTable = "treatments";
     renderAt("/book/services");

@@ -13,6 +13,8 @@ export function SlotStep() {
 
   const treatment = treatments.data?.find((t) => t.slug === params.service);
   const location = locations.data?.find((l) => l.slug === params.location);
+  // Same guards as earlier steps: an unknown slug (old link, typo) goes back to where it's chosen.
+  if (treatments.isSuccess && !treatment) return <Navigate to={stepUrl("services", {})} replace />;
   if (locations.isSuccess && !location) return <Navigate to={stepUrl("location", { service: params.service })} replace />;
 
   return (
