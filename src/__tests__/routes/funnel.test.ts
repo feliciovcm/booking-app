@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFunnelParams, stepUrl } from "./funnel";
+import { readFunnelParams, stepUrl } from "../../routes/funnel";
 
 describe("funnel URL state", () => {
   it("builds step URLs with only the params that are set", () => {

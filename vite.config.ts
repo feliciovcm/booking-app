@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: "jsdom",
-    setupFiles: ["./src/test/setup.ts"],
+    setupFiles: ["./src/__tests__/helpers/setup.ts"],
     // Edge function logic that doesn't touch Deno APIs is tested here too.
     include: ["src/**/*.test.{ts,tsx}", "supabase/functions/**/*.test.ts"],
   },

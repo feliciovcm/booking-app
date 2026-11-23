@@ -27,7 +27,7 @@ export default tseslint.config(
   },
   {
     // Test helpers are never hot-reloaded, so the fast-refresh rule doesn't apply.
-    files: ['src/test/**', '**/*.test.{ts,tsx}'],
+    files: ['src/__tests__/helpers/**', '**/*.test.{ts,tsx}'],
     rules: { 'react-refresh/only-export-components': 'off' },
   },
 )

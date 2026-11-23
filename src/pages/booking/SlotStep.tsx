@@ -1,9 +1,11 @@
 import { Link, Navigate } from "react-router";
-import { BookingApiError, useAvailableDates, useAvailableTimes, useBookingSession, useHold } from "../lib/booking";
-import { useLocations, useTreatments } from "../lib/catalog";
-import { addDays, formatDay, formatTime, todayIn } from "../lib/time";
-import { QueryState } from "./QueryState";
-import { stepUrl, useFunnel } from "./funnel";
+import { BookingApiError } from "../../api/booking";
+import { useAvailableDates, useAvailableTimes, useBookingSession, useHold } from "../../hooks/booking";
+import { useLocations, useTreatments } from "../../hooks/catalog";
+import { addDays, formatDay, formatTime, todayIn } from "../../utils/time";
+import { QueryState } from "../../components/QueryState";
+import { useFunnel } from "../../hooks/funnel";
+import { stepUrl } from "../../routes/funnel";
 
 const DAYS_SHOWN = 14;
 

@@ -1,7 +1,8 @@
 import { Link } from "react-router";
-import { formatPrice, useTreatments } from "../lib/catalog";
-import { QueryState } from "./QueryState";
-import { useFunnel } from "./funnel";
+import { useTreatments } from "../../hooks/catalog";
+import { QueryState } from "../../components/QueryState";
+import { useFunnel } from "../../hooks/funnel";
+import { formatPrice } from "../../utils/format";
 
 export function ServiceStep() {
   const treatments = useTreatments();

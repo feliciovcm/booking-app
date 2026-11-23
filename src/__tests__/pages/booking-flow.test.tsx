@@ -1,8 +1,8 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { installFakeBooking } from "../test/fake-booking";
-import { renderAt } from "../test/render";
+import { installFakeBooking } from "../helpers/fake-booking";
+import { renderAt } from "../helpers/render";
 
 // A tiny fake of the supabase-js calls this app makes. It records inserts and
 // whether .select() was chained after one (the RLS gotcha on consult_requests).
@@ -13,7 +13,7 @@ const fake = vi.hoisted(() => ({
   selectAfterInsert: 0,
 }));
 
-vi.mock("../lib/supabase", () => ({
+vi.mock("../../lib/supabase", () => ({
   SUPABASE_URL: "https://test.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
   supabase: {

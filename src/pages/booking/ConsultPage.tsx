@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { z } from "zod";
-import { consultRequestSchema, submitConsultRequest, type ConsultRequestInput } from "../lib/consult";
+import { consultRequestSchema, submitConsultRequest, type ConsultRequestInput } from "../../api/consult";
 
 type Status = "idle" | "submitting" | "sent" | "failed";
 type FieldErrors = Partial<Record<keyof ConsultRequestInput, string>>;

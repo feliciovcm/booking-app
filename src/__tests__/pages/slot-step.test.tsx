@@ -1,12 +1,12 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { installFakeBooking } from "../test/fake-booking";
-import { renderAt } from "../test/render";
+import { installFakeBooking } from "../helpers/fake-booking";
+import { renderAt } from "../helpers/render";
 
 // Catalog reads come from a fake supabase client; booking calls go to a fake `booking`
 // function behind global fetch.
-vi.mock("../lib/supabase", () => ({
+vi.mock("../../lib/supabase", () => ({
   SUPABASE_URL: "https://test.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
   supabase: {

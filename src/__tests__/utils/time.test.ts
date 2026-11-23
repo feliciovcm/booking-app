@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, formatDay, formatTime, todayIn } from "./time";
+import { addDays, formatDay, formatTime, todayIn } from "../../utils/time";
 
 describe("time helpers", () => {
   it("uses the clinic's date, not the visitor's", () => {

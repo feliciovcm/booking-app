@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router";
-import App from "../App";
+import App from "../../App";
 
 // Renders the real routes at a URL, with a fresh query cache and no retries,
 // and exposes the current URL so tests can assert on navigation.

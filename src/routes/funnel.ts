@@ -1,5 +1,3 @@
-import { useNavigate, useSearchParams } from "react-router";
-
 // The funnel's state lives in the URL (?service=prp&location=noho), not in React state:
 // - deep links work, like Great Many's "Book PRP" button linking to ?service=prp
 // - refresh and the back button keep the visitor's choices
@@ -33,16 +31,4 @@ export function stepUrl(step: FunnelStep, params: FunnelParams): string {
 
 export function stepIndex(step: FunnelStep): number {
   return FUNNEL_STEPS.indexOf(step);
-}
-
-export function useFunnel() {
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
-  const params = readFunnelParams(searchParams);
-
-  return {
-    params,
-    goTo: (step: FunnelStep, patch: FunnelParams = {}, options?: { replace?: boolean }) =>
-      navigate(stepUrl(step, { ...params, ...patch }), options),
-  };
 }

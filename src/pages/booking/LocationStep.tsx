@@ -1,7 +1,9 @@
 import { Navigate } from "react-router";
-import { formatPrice, useLocations, useTreatments } from "../lib/catalog";
-import { QueryState } from "./QueryState";
-import { stepUrl, useFunnel } from "./funnel";
+import { useLocations, useTreatments } from "../../hooks/catalog";
+import { QueryState } from "../../components/QueryState";
+import { useFunnel } from "../../hooks/funnel";
+import { stepUrl } from "../../routes/funnel";
+import { formatPrice } from "../../utils/format";
 
 export function LocationStep() {
   const treatments = useTreatments();

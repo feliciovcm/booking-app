@@ -1,65 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./supabase";
-
-// Client for our `booking` edge function. The browser never talks to the booking vendor
-// and never knows which one it is: it gets an opaque sessionId and our own error codes.
-
-export type Slot = { id: string; start: string };
-export type Hold = { start: string; expiresAt: string };
-
-export type BookingErrorCode =
-  | "SLOT_UNAVAILABLE" // someone else got the time: pick another
-  | "SESSION_EXPIRED" // the vendor session is gone: start a new one
-  | "UNAVAILABLE" // vendor down or slow: retrying may work
-  | "NETWORK" // we couldn't reach our function at all
-  | (string & {}); // NOT_BOOKABLE, INVALID, MISCONFIGURED, ...
-
-export class BookingApiError extends Error {
-  readonly code: BookingErrorCode;
-  readonly status: number;
-  constructor(code: BookingErrorCode, message: string, status: number) {
-    super(message);
-    this.name = "BookingApiError";
-    this.code = code;
-    this.status = status;
-  }
-}
-
-const isCode = (error: unknown, code: BookingErrorCode) => error instanceof BookingApiError && error.code === code;
-
-async function request<T>(body: Record<string, string>): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${SUPABASE_URL}/functions/v1/booking`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_PUBLISHABLE_KEY,
-        "content-type": "application/json",
-        // Follows this request through our logs and the vendor's.
-        "x-request-id": crypto.randomUUID(),
-      },
-      body: JSON.stringify(body),
-    });
-  } catch {
-    throw new BookingApiError("NETWORK", "We couldn't reach the booking service. Check your connection and try again.", 0);
-  }
-  const json = await res.json().catch(() => null);
-  if (!res.ok) {
-    throw new BookingApiError(json?.error?.code ?? "UNKNOWN", json?.error?.message ?? "Something went wrong. Please try again.", res.status);
-  }
-  return json as T;
-}
-
-export const bookingApi = {
-  start: (location: string, service: string) => request<{ sessionId: string }>({ action: "start", location, service }),
-  dates: (sessionId: string, from: string, to: string) => request<{ dates: string[] }>({ action: "dates", sessionId, from, to }),
-  times: (sessionId: string, date: string) => request<{ times: Slot[] }>({ action: "times", sessionId, date }),
-  hold: (sessionId: string, slotId: string) => request<Hold>({ action: "hold", sessionId, slotId }),
-};
+import { bookingApi, isBookingError } from "../api/booking";
 
 // Retry only what retrying can fix, at most twice.
 const retryTransient = (failures: number, error: Error) =>
-  failures < 2 && (isCode(error, "UNAVAILABLE") || isCode(error, "NETWORK"));
+  failures < 2 && (isBookingError(error, "UNAVAILABLE") || isBookingError(error, "NETWORK"));
 
 // The session lives in sessionStorage: it survives a refresh, dies with the tab, and is
 // specific to one treatment at one clinic (the vendor session is built for that pair).
@@ -125,7 +69,7 @@ type Session = ReturnType<typeof useBookingSession>;
 
 /** On SESSION_EXPIRED, start over with a new session; always rethrow so the UI knows. */
 const resetOnExpiry = (session: Session) => (error: unknown) => {
-  if (isCode(error, "SESSION_EXPIRED")) session.reset();
+  if (isBookingError(error, "SESSION_EXPIRED")) session.reset();
   throw error;
 };
 
@@ -158,9 +102,9 @@ export function useHold(session: Session) {
   return useMutation({
     mutationFn: (slotId: string) => bookingApi.hold(session.data!, slotId),
     onError: (error) => {
-      if (isCode(error, "SESSION_EXPIRED")) session.reset();
+      if (isBookingError(error, "SESSION_EXPIRED")) session.reset();
       // Someone else got it: refresh the times so the visitor sees what's really left.
-      if (isCode(error, "SLOT_UNAVAILABLE")) void queryClient.invalidateQueries({ queryKey: ["booking-times", session.data] });
+      if (isBookingError(error, "SLOT_UNAVAILABLE")) void queryClient.invalidateQueries({ queryKey: ["booking-times", session.data] });
     },
   });
 }

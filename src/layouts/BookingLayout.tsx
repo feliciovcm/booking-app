@@ -1,5 +1,6 @@
 import { Link, Outlet, useLocation } from "react-router";
-import { FUNNEL_STEPS, stepIndex, stepUrl, useFunnel, type FunnelStep } from "./funnel";
+import { useFunnel } from "../hooks/funnel";
+import { FUNNEL_STEPS, stepIndex, stepUrl, type FunnelStep } from "../routes/funnel";
 
 export function BookingLayout() {
   const { pathname } = useLocation();

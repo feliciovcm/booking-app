@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { supabase } from "./supabase";
+import { supabase } from "../lib/supabase";
 
 // Mirrors the check constraints on public.consult_requests. The database stays the
 // source of truth; this only gives the visitor errors before a round trip.
