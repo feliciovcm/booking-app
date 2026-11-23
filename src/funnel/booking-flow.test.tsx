@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { installFakeBooking } from "../test/fake-booking";
 import { renderAt } from "../test/render";
 
 // A tiny fake of the supabase-js calls this app makes. It records inserts and
@@ -13,6 +14,8 @@ const fake = vi.hoisted(() => ({
 }));
 
 vi.mock("../lib/supabase", () => ({
+  SUPABASE_URL: "https://test.supabase.co",
+  SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
   supabase: {
     from: (table: string) => ({
       select: () => ({
@@ -33,6 +36,13 @@ vi.mock("../lib/supabase", () => ({
     }),
   },
 }));
+
+// The slot step calls the booking function; its own behavior is tested in slot-step.test.tsx.
+beforeEach(() => {
+  sessionStorage.clear();
+  installFakeBooking();
+});
+afterEach(() => vi.unstubAllGlobals());
 
 beforeEach(() => {
   fake.failTable = null;

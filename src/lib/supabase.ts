@@ -12,4 +12,7 @@ const env = z
   })
   .parse(import.meta.env);
 
-export const supabase = createClient<Database>(env.VITE_SUPABASE_URL, env.VITE_SUPABASE_PUBLISHABLE_KEY);
+export const SUPABASE_URL = env.VITE_SUPABASE_URL;
+export const SUPABASE_PUBLISHABLE_KEY = env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);

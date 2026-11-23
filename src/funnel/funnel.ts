@@ -8,9 +8,9 @@ import { useNavigate, useSearchParams } from "react-router";
 export const FUNNEL_STEPS = ["services", "location", "slot"] as const;
 export type FunnelStep = (typeof FUNNEL_STEPS)[number];
 
-export type FunnelParams = { service?: string; location?: string };
+export type FunnelParams = { service?: string; location?: string; date?: string };
 
-const PARAM_KEYS = ["service", "location"] as const;
+const PARAM_KEYS = ["service", "location", "date"] as const;
 
 export function readFunnelParams(searchParams: URLSearchParams): FunnelParams {
   const params: FunnelParams = {};
@@ -42,6 +42,7 @@ export function useFunnel() {
 
   return {
     params,
-    goTo: (step: FunnelStep, patch: FunnelParams = {}) => navigate(stepUrl(step, { ...params, ...patch })),
+    goTo: (step: FunnelStep, patch: FunnelParams = {}, options?: { replace?: boolean }) =>
+      navigate(stepUrl(step, { ...params, ...patch }), options),
   };
 }

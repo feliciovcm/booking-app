@@ -63,3 +63,13 @@ button, input, textarea { font: inherit; }
 .form input, .form textarea { padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
 .form input[aria-invalid="true"] { border-color: var(--danger); }
 .field-error, .error { color: var(--danger); font-size: 0.9rem; }
+
+.chips, .times { list-style: none; padding: 0; margin: 16px 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.times { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.chip {
+  width: 100%; cursor: pointer; padding: 10px 14px; border-radius: 999px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+}
+.chip:hover, .chip.selected { border-color: var(--accent); }
+.chip.selected { background: var(--highlight); }
+.chip:disabled { opacity: 0.6; cursor: default; }

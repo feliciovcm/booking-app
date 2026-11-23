@@ -27,7 +27,7 @@ export function ServiceStep() {
             <button
               type="button"
               className={`option${params.service === t.slug ? " selected" : ""}`}
-              onClick={() => goTo("location", { service: t.slug })}
+              onClick={() => goTo("location", { service: t.slug, date: undefined })}
             >
               <span className="option-title">{t.name}</span>
               <span className="option-meta">

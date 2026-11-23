@@ -29,7 +29,7 @@ export function LocationStep() {
             <button
               type="button"
               className={`option${params.location === l.slug ? " selected" : ""}`}
-              onClick={() => goTo("slot", { location: l.slug })}
+              onClick={() => goTo("slot", { location: l.slug, date: undefined })}
             >
               <span className="option-title">{l.name}</span>
               <span className="muted">{l.address}</span>
