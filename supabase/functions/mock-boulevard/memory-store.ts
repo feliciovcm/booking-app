@@ -64,5 +64,22 @@ export function memoryStore(clock: { now: number }): BoulevardStore {
       carts.get(cartId)!.completedAt = clock.now;
       return { appointmentId: r.appointmentId!, clientId: r.clientId! };
     },
+    async findAppointment(appointmentId) {
+      const r = reservations.find((x) => x.appointmentId === appointmentId && x.status === "booked");
+      return r ? getCart(r.cartId) : null;
+    },
+    async rescheduleAppointment(appointmentId, start) {
+      const r = reservations.find((x) => x.appointmentId === appointmentId && x.status === "booked");
+      if (!r) return false;
+      if (reservations.some((x) => x !== r && x.locationId === r.locationId && x.start === start.getTime() && live(x))) return false;
+      r.start = start.getTime();
+      return true;
+    },
+    async cancelAppointment(appointmentId) {
+      const r = reservations.find((x) => x.appointmentId === appointmentId && x.status === "booked");
+      if (!r) return false;
+      r.status = "released";
+      return true;
+    },
   };
 }

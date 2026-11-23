@@ -9,8 +9,9 @@
 // of API calls fails (failureRate) and every API call waits a random latency.
 
 import { graphql, type GraphQLFormattedError } from "graphql";
-import { BlvdError, rootValue, schema, type BoulevardStore } from "./schema.ts";
+import { BlvdError, rootValue, schema, type BoulevardStore, type Context } from "./schema.ts";
 import { constantTimeEqual, signToken, verifyToken, type TokenKind } from "./tokens.ts";
+import { appointmentEvent, type WebhookSender } from "./webhooks.ts";
 
 export type Deps = {
   clientId: string;
@@ -25,6 +26,10 @@ export type Deps = {
   failureRate: number;
   maxLatencyMs: number;
   log: (entry: Record<string, unknown>) => void;
+  /** Where appointment webhooks go. Unset: none are sent. */
+  webhooks?: WebhookSender;
+  /** Keeps a background delivery alive after the response (EdgeRuntime.waitUntil when deployed). */
+  defer?: (work: Promise<unknown>) => void;
 };
 
 const API_PATH = "/api/2026-06/client";
@@ -126,7 +131,8 @@ async function token(req: Request, requestId: string, deps: Deps): Promise<Respo
 
 async function api(req: Request, requestId: string, deps: Deps, meta: Record<string, unknown>): Promise<Response> {
   const bearer = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
-  if (!bearer || !(await verifyToken(deps.clientSecret, bearer, deps.now().getTime()))) {
+  const verified = bearer ? await verifyToken(deps.clientSecret, bearer, deps.now().getTime()) : null;
+  if (!verified) {
     return json(401, { errors: [{ message: "Unauthorized" }] }, requestId);
   }
 
@@ -151,7 +157,7 @@ async function api(req: Request, requestId: string, deps: Deps, meta: Record<str
     schema,
     source: body.query,
     rootValue,
-    contextValue: { store: deps.store, now: deps.now() },
+    contextValue: { store: deps.store, now: deps.now(), tokenKind: verified.kind, emit: emitter(deps) } satisfies Context,
     variableValues: body.variables,
     operationName: body.operationName,
   });
@@ -209,4 +215,27 @@ function luhn(number: string): boolean {
     sum += digit;
   }
   return sum % 10 === 0;
+}
+
+// Builds Boulevard's event and sends it in the background: the API response doesn't wait
+// for webhook delivery, just as Boulevard's doesn't.
+function emitter(deps: Deps): Context["emit"] {
+  const webhooks = deps.webhooks;
+  if (!webhooks) return undefined;
+  return (type, appointment) => {
+    const event = appointmentEvent(
+      type,
+      appointment,
+      {
+        businessId: `urn:blvd:Business:${deps.businessId}`,
+        apiApplicationId: `urn:blvd:ApiApplication:${deps.clientId}`,
+        webhookId: "urn:blvd:Webhook:mock",
+        idempotencyKey: crypto.randomUUID(),
+      },
+      deps.now(),
+    );
+    const delivery = webhooks.send(event);
+    if (deps.defer) deps.defer(delivery);
+    else void delivery;
+  };
 }

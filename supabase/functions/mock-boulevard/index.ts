@@ -5,12 +5,17 @@
 
 import { createHandler } from "./handler.ts";
 import { createPgStore } from "./store.ts";
+import { createWebhookSender } from "./webhooks.ts";
 
 const env = (name: string) => {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`${name} must be set`);
   return value;
 };
+
+// Optional: where to send appointment webhooks (our boulevard-webhook function).
+const webhookUrl = Deno.env.get("MOCK_WEBHOOK_URL");
+const log = (entry: Record<string, unknown>) => console.log(JSON.stringify(entry));
 
 export default {
   fetch: createHandler({
@@ -23,6 +28,9 @@ export default {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     failureRate: Number(Deno.env.get("MOCK_FAILURE_RATE") ?? "0.1"),
     maxLatencyMs: Number(Deno.env.get("MOCK_MAX_LATENCY_MS") ?? "800"),
-    log: (entry) => console.log(JSON.stringify(entry)),
+    log,
+    webhooks: webhookUrl ? createWebhookSender({ url: webhookUrl, clientSecret: env("MOCK_BLVD_CLIENT_SECRET"), log }) : undefined,
+    // The response returns right away; the runtime keeps the delivery running.
+    defer: (work) => EdgeRuntime.waitUntil(work),
   }),
 };

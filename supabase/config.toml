@@ -423,3 +423,8 @@ verify_jwt = false
 # (Supabase recommends verify_jwt = false for publishable-key functions).
 [functions.booking]
 verify_jwt = false
+
+# Called by Boulevard, not by a browser or a Supabase client: it has no JWT to send.
+# The function checks Boulevard's HMAC signature instead.
+[functions.boulevard-webhook]
+verify_jwt = false

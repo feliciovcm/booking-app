@@ -11,6 +11,8 @@
 // below are invented for cases the docs don't cover.
 
 import { buildSchema } from "graphql";
+import type { TokenKind } from "./tokens.ts";
+import type { Appointment, AppointmentEventType } from "./webhooks.ts";
 import {
   BOOKING_WINDOW_DAYS,
   SERVICES,
@@ -56,9 +58,28 @@ export interface BoulevardStore {
   setPaymentToken(cartId: string, token: string): Promise<void>;
   /** Turns the live reservation into an appointment. Null if it expired in the meantime. */
   checkout(cartId: string): Promise<{ appointmentId: string; clientId: string } | null>;
+  /** The cart behind a booked appointment, or null (unknown or cancelled). */
+  findAppointment(appointmentId: string): Promise<CartRecord | null>;
+  /** Moves a booked appointment. False if the new time is taken. */
+  rescheduleAppointment(appointmentId: string, start: Date): Promise<boolean>;
+  /** Cancels a booked appointment and frees its time. False if it isn't booked. */
+  cancelAppointment(appointmentId: string): Promise<boolean>;
 }
 
-export type Context = { store: BoulevardStore; now: Date };
+export type Context = {
+  store: BoulevardStore;
+  now: Date;
+  /** Which kind of token made the call. Staff-only mutations need a server token. */
+  tokenKind?: TokenKind;
+  /** Sends a webhook in the background, if the mock is configured to (see webhooks.ts). */
+  emit?: (type: AppointmentEventType, appointment: Appointment) => void;
+};
+
+/** A booked cart as the appointment Boulevard's webhook payload describes. */
+function toAppointment(cart: CartRecord, bookedByType: Appointment["bookedByType"], extra: Partial<Appointment> = {}): Appointment {
+  const r = cart.reservation!;
+  return { id: r.appointmentId!, clientId: r.clientId!, locationId: cart.locationId, serviceId: cart.itemId!, start: r.startTime, client: cart.clientInformation, bookedByType, ...extra };
+}
 
 /** Shown to callers in Boulevard's error format: { __typename: "BlvdError", code, message, description }. */
 export class BlvdError extends Error {
@@ -90,7 +111,15 @@ export const schema = buildSchema(/* GraphQL */ `
     updateCart(input: UpdateCartInput!): UpdateCartPayload
     addCartCardPaymentMethod(input: AddCartCardPaymentMethodInput!): AddCartCardPaymentMethodPayload
     checkoutCart(input: CheckoutCartInput!): CheckoutCartPayload
+    "Mock only: what front desk staff do in Boulevard's dashboard. Needs a server token."
+    mockStaffRescheduleAppointment(input: MockStaffRescheduleInput!): MockStaffAppointmentPayload
+    "Mock only: what front desk staff do in Boulevard's dashboard. Needs a server token."
+    mockStaffCancelAppointment(input: MockStaffCancelInput!): MockStaffAppointmentPayload
   }
+
+  input MockStaffRescheduleInput { appointmentId: ID!  startTime: DateTime! }
+  input MockStaffCancelInput { appointmentId: ID! }
+  type MockStaffAppointmentPayload { appointmentId: ID!  startAt: DateTime  cancelled: Boolean! }
 
   type Business { id: ID!  name: String!  locations(first: Int): LocationConnection! }
   type LocationConnection { edges: [LocationEdge!]! }
@@ -205,6 +234,16 @@ function toCart(cart: CartRecord, now: Date) {
 async function loadCart(ctx: Context, id: string): Promise<CartRecord> {
   const cart = await ctx.store.getCart(id);
   if (!cart) throw new BlvdError("CART_NOT_FOUND", "This booking session has expired.", `No cart with id ${id}.`); // mock code
+  return cart;
+}
+
+/** A booked appointment, for the staff-only mutations. Browsers (anonymous tokens) can't use them. */
+async function staffAppointment(ctx: Context, appointmentId: string): Promise<CartRecord> {
+  if (ctx.tokenKind !== "client_credentials") {
+    throw new BlvdError("MOCK_STAFF_ONLY", "Not allowed.", "Staff mutations need a client_credentials token."); // mock code
+  }
+  const cart = await ctx.store.findAppointment(appointmentId);
+  if (!cart) throw new BlvdError("MOCK_APPOINTMENT_NOT_FOUND", "Appointment not found.", `No booked appointment ${appointmentId}.`); // mock code
   return cart;
 }
 
@@ -372,7 +411,30 @@ export const rootValue = {
       throw new BlvdError(lapsed.code, lapsed.message, lapsed.description);
     }
     const done = await loadCart(ctx, cart.id);
+    // Only the first checkout creates the appointment, so only it sends the webhook.
+    ctx.emit?.("APPOINTMENT_CREATED", toAppointment(done, "CLIENT"));
     return { cart: toCart(done, ctx.now), appointments: appointments(done) };
+  },
+
+  mockStaffRescheduleAppointment: async ({ input }: Args<{ appointmentId: string; startTime: string }>, ctx: Context) => {
+    const cart = await staffAppointment(ctx, input.appointmentId);
+    const start = new Date(input.startTime);
+    if (Number.isNaN(start.getTime()) || start <= ctx.now) {
+      throw new BlvdError("MOCK_INVALID_TIME", "Pick a time in the future.", "startTime must be a future instant."); // mock code
+    }
+    if (!(await ctx.store.rescheduleAppointment(input.appointmentId, start))) {
+      throw new BlvdError("MOCK_TIME_TAKEN", "That time is already booked.", "Another appointment holds this time."); // mock code
+    }
+    const moved = (await ctx.store.findAppointment(input.appointmentId))!;
+    ctx.emit?.("APPOINTMENT_RESCHEDULED", toAppointment(moved, "CLIENT"));
+    return { appointmentId: input.appointmentId, startAt: formatLocal(start, VENDOR_LOCATIONS[cart.locationId].timezone), cancelled: false };
+  },
+
+  mockStaffCancelAppointment: async ({ input }: Args<{ appointmentId: string }>, ctx: Context) => {
+    const cart = await staffAppointment(ctx, input.appointmentId);
+    await ctx.store.cancelAppointment(input.appointmentId);
+    ctx.emit?.("APPOINTMENT_CANCELLED", toAppointment(cart, "CLIENT", { cancelledAt: ctx.now }));
+    return { appointmentId: input.appointmentId, startAt: null, cancelled: true };
   },
 };
 

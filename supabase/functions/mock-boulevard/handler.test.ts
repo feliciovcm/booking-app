@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createHandler, type Deps } from "./handler.ts";
 import { memoryStore } from "./memory-store.ts";
 import { SERVICES, VENDOR_LOCATIONS } from "./slots.ts";
+import { verifyBoulevardWebhook } from "../_shared/boulevard-signature.ts";
+import { createWebhookSender } from "./webhooks.ts";
 
 const CLIENT_ID = "app-123";
 const SECRET = "c2VjcmV0LWJ5dGVz"; // base64 text, like the developer portal shows
@@ -290,6 +292,144 @@ describe("cards/tokenize", () => {
   it("never logs card data", async () => {
     await tokenize({ card });
     expect(JSON.stringify(logs)).not.toMatch(/4242|Test Visitor|10012/);
+  });
+});
+
+describe("webhooks", () => {
+  type Delivery = { headers: Headers; body: string };
+  let deliveries: Delivery[];
+  let replies: number[]; // status codes the receiver answers with, in order (default 200)
+  let pending: Promise<unknown>[];
+
+  beforeEach(() => {
+    deliveries = [];
+    replies = [];
+    pending = [];
+    deps.webhooks = createWebhookSender({
+      url: "https://receiver.test/boulevard-webhook",
+      clientSecret: SECRET,
+      now: () => new Date(clock.now),
+      sleep: async () => {},
+      log: (entry) => logs.push(entry),
+      fetch: async (_url, init) => {
+        deliveries.push({ headers: new Headers(init!.headers), body: String(init!.body) });
+        return new Response(null, { status: replies.shift() ?? 200 });
+      },
+    });
+    deps.defer = (work) => pending.push(work);
+  });
+  const delivered = async () => {
+    await Promise.all(pending);
+    return deliveries.map((d) => JSON.parse(d.body));
+  };
+
+  async function booked(): Promise<{ cartId: string; appointmentId: string; startTime: string }> {
+    const cartId = await newCartWithItem();
+    const [slot] = await times(cartId);
+    await reserve(cartId, slot.id);
+    await fillClientAndCard(cartId);
+    const appointmentId = (await checkout(cartId)).body.data.checkoutCart.appointments[0].appointmentId;
+    return { cartId, appointmentId, startTime: slot.startTime };
+  }
+  const staff = (mutation: string, input: Record<string, unknown>) =>
+    gql(`mutation($input: ${mutation === "mockStaffCancelAppointment" ? "MockStaffCancelInput" : "MockStaffRescheduleInput"}!) { ${mutation}(input: $input) { appointmentId startAt cancelled } }`, { input });
+
+  it("sends a signed APPOINTMENT_CREATED in Boulevard's shape after checkout", async () => {
+    const { appointmentId, startTime } = await booked();
+    const [event] = await delivered();
+    expect(event).toMatchObject({
+      eventType: "APPOINTMENT_CREATED",
+      event: "appointment.created",
+      resource: "Appointment",
+      businessId: `urn:blvd:Business:${BUSINESS_ID}`,
+      idempotencyKey: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      data: {
+        node: {
+          __typename: "Appointment",
+          id: appointmentId,
+          startAt: startTime, // local time with offset, as Boulevard writes it
+          locationId: NOHO,
+          appointmentServices: [{ serviceId: PRP, startAt: startTime }],
+          client: { email: "ana@example.com", firstName: "Ana", lastName: "Silva", mobilePhone: "+12125550100" },
+          bookedByType: "CLIENT",
+          cancellation: null,
+        },
+      },
+    });
+
+    // Signed like Boulevard: our own verifier accepts it with the shared secret.
+    const { headers, body } = deliveries[0];
+    const verified = await verifyBoulevardWebhook({
+      secretBase64: SECRET,
+      salt: headers.get("x-blvd-oauth-hmac-salt"),
+      signature: headers.get("x-blvd-oauth-hmac-sha256"),
+      rawBody: body,
+      nowMs: clock.now,
+    });
+    expect(verified.ok).toBe(true);
+  });
+
+  it("sends nothing more when checkout is retried", async () => {
+    const { cartId } = await booked();
+    await checkout(cartId);
+    expect(await delivered()).toHaveLength(1);
+  });
+
+  it("lets staff reschedule, sending APPOINTMENT_RESCHEDULED with the new time", async () => {
+    const { appointmentId } = await booked();
+    const res = await staff("mockStaffRescheduleAppointment", { appointmentId, startTime: "2026-11-26T15:00:00Z" });
+    expect(res.body.data.mockStaffRescheduleAppointment).toEqual({ appointmentId, startAt: "2026-11-26T10:00:00-05:00", cancelled: false });
+    const [, moved] = await delivered();
+    expect(moved).toMatchObject({ eventType: "APPOINTMENT_RESCHEDULED", data: { node: { id: appointmentId, startAt: "2026-11-26T10:00:00-05:00" } } });
+  });
+
+  it("refuses a reschedule onto a booked time", async () => {
+    const one = await booked();
+    const two = await booked();
+    const res = await staff("mockStaffRescheduleAppointment", { appointmentId: two.appointmentId, startTime: new Date(one.startTime).toISOString() });
+    expect(res.body.errors[0].code).toBe("MOCK_TIME_TAKEN");
+  });
+
+  it("lets staff cancel, sending APPOINTMENT_CANCELLED and freeing the time", async () => {
+    const { appointmentId, startTime } = await booked();
+    const res = await staff("mockStaffCancelAppointment", { appointmentId });
+    expect(res.body.data.mockStaffCancelAppointment).toEqual({ appointmentId, startAt: null, cancelled: true });
+    const [, cancelled] = await delivered();
+    expect(cancelled).toMatchObject({ eventType: "APPOINTMENT_CANCELLED", data: { node: { id: appointmentId, cancellation: { cancelledAt: "2026-11-24T12:00:00.000Z" } } } });
+
+    const other = await newCartWithItem();
+    expect((await times(other)).map((t) => t.startTime)).toContain(startTime);
+    expect((await staff("mockStaffCancelAppointment", { appointmentId })).body.errors[0].code).toBe("MOCK_APPOINTMENT_NOT_FOUND");
+  });
+
+  it("keeps staff mutations away from browser tokens", async () => {
+    const { appointmentId } = await booked();
+    const anon = await (await tokenRequest({ grant_type: "urn:blvd:params:oauth:grant-type:anonymous", client_id: CLIENT_ID, business_id: BUSINESS_ID })).json();
+    token = anon.access_token;
+    expect((await staff("mockStaffCancelAppointment", { appointmentId })).body.errors[0].code).toBe("MOCK_STAFF_ONLY");
+  });
+
+  it("retries a failed delivery once, then gives up, like Boulevard's default", async () => {
+    replies = [500, 503];
+    await booked();
+    await delivered();
+    expect(deliveries).toHaveLength(2);
+    expect(logs.filter((l) => l.msg === "webhook delivery").map((l) => l.status ?? l.outcome)).toEqual([500, 503, "failed permanently"]);
+  });
+
+  it("stops sending for good after a 410 Gone", async () => {
+    replies = [410];
+    await booked();
+    await booked();
+    await delivered();
+    expect(deliveries).toHaveLength(1);
+    expect(logs.some((l) => l.outcome === "skipped")).toBe(true);
+  });
+
+  it("never logs the client's details", async () => {
+    await booked();
+    await delivered();
+    expect(JSON.stringify(logs)).not.toMatch(/ana@example\.com|Silva|\+12125550100/);
   });
 });
 

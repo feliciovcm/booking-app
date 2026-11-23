@@ -119,5 +119,40 @@ export function createPgStore(databaseUrl: string): BoulevardStore {
         return { appointmentId: booked.appointment_id, clientId: booked.client_id };
       });
     },
+
+    async findAppointment(appointmentId) {
+      const [row] = await sql<{ cart_id: string }[]>`
+        select cart_id from mock_vendor.reservations where appointment_id = ${appointmentId} and status = 'booked'`;
+      return row ? getCart(row.cart_id) : null;
+    },
+
+    async rescheduleAppointment(appointmentId, start) {
+      try {
+        return await sql.begin(async (tx) => {
+          // A stale reservation still counts in the partial unique index until released.
+          await tx`
+            update mock_vendor.reservations r set status = 'released'
+            from mock_vendor.reservations a
+            where a.appointment_id = ${appointmentId}
+              and r.location_id = a.location_id and r.start_time = ${start}
+              and r.status = 'reserved' and r.expires_at <= now()`;
+          const moved = await tx`
+            update mock_vendor.reservations set start_time = ${start}
+            where appointment_id = ${appointmentId} and status = 'booked'`;
+          return moved.count === 1;
+        });
+      } catch (error) {
+        if ((error as { code?: string }).code === "23505") return false; // the time is taken
+        throw error;
+      }
+    },
+
+    async cancelAppointment(appointmentId) {
+      // 'released' frees the time; the mock keeps no separate cancelled state.
+      const cancelled = await sql`
+        update mock_vendor.reservations set status = 'released'
+        where appointment_id = ${appointmentId} and status = 'booked'`;
+      return cancelled.count === 1;
+    },
   };
 }
