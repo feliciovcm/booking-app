@@ -418,3 +418,8 @@ enabled = true
 # Fake Boulevard: callers use its own OAuth2 tokens, not a Supabase JWT.
 [functions.mock-boulevard]
 verify_jwt = false
+
+# Called by our frontend with the publishable key, which the function checks itself
+# (Supabase recommends verify_jwt = false for publishable-key functions).
+[functions.booking]
+verify_jwt = false

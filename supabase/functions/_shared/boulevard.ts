@@ -1,10 +1,12 @@
-// Boulevard adapter: the only code that knows Boulevard speaks GraphQL. The rest of our
-// functions call these methods and get our own shapes and our own errors back.
+// Boulevard adapter: implements our BookingProvider contract on top of Boulevard's
+// Client API. The only code that knows Boulevard speaks GraphQL, uses carts and has
+// its own error codes; everything it returns or throws is in our vocabulary.
 //
 // Works against the mock and Boulevard's sandbox/production the same way; only
 // baseUrl and credentials change (mock: <SUPABASE_URL>/functions/v1/mock-boulevard,
 // sandbox: https://sandbox.joinblvd.com).
 
+import { BookingError, UNAVAILABLE_MESSAGE, type BookingErrorCode, type BookingProvider } from "./booking-provider.ts";
 import { timed, type Log } from "./log.ts";
 
 export type BoulevardConfig = {
@@ -21,40 +23,24 @@ export type BoulevardConfig = {
   maxRetries?: number;
 };
 
-export type BookableTime = { id: string; start: string };
-
-/** What our functions need from a booking vendor. Another vendor would implement the same. */
-export interface BookingProvider {
-  startCart(locationId: string, serviceId: string): Promise<{ cartId: string }>;
-  bookableDates(cartId: string, from: string, to: string): Promise<string[]>;
-  bookableTimes(cartId: string, date: string): Promise<BookableTime[]>;
-  reserve(cartId: string, timeId: string): Promise<{ start: string; expiresAt: string }>;
-}
-
-/**
- * Our error for anything that went wrong talking to Boulevard. `code` is Boulevard's
- * when it sent one (e.g. CART_TIME_NOT_AVAILABLE); `userMessage` is safe to show.
- */
-export class BoulevardError extends Error {
-  readonly code: string;
-  readonly userMessage: string;
-  readonly retryable: boolean;
-  constructor(code: string, userMessage: string, retryable = false) {
-    super(`Boulevard ${code}`);
-    this.name = "BoulevardError";
-    this.code = code;
-    this.userMessage = userMessage;
-    this.retryable = retryable;
-  }
-}
-
 const API_PATH = "/api/2026-06/client";
-const UNAVAILABLE = "Booking is temporarily unavailable. Please try again in a moment.";
+
+// Boulevard's codes (from its docs, plus the mock's own) -> ours. Anything not listed
+// with a BlvdError becomes INVALID, with Boulevard's user-facing message.
+const ERROR_MAP: Record<string, BookingErrorCode> = {
+  CART_TIME_NOT_AVAILABLE: "SLOT_UNAVAILABLE",
+  CART_MISSING_ITEM_TIME: "SESSION_EXPIRED",
+  CART_NOT_FOUND: "SESSION_EXPIRED",
+  CART_COMPLETED: "SESSION_EXPIRED",
+};
 
 // One token per isolate, reused across requests until a minute before it expires.
 // Client credentials tokens last 24 hours, so this saves a token call on nearly every request.
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 export const clearTokenCache = () => tokenCache.clear();
+
+const unavailable = (vendorCode: string) => new BookingError("UNAVAILABLE", UNAVAILABLE_MESSAGE, vendorCode);
+const misconfigured = (vendorCode: string) => new BookingError("MISCONFIGURED", UNAVAILABLE_MESSAGE, vendorCode);
 
 export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvider {
   const doFetch = config.fetch ?? fetch;
@@ -70,8 +56,7 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
     try {
       return await doFetch(url, { ...init, signal: controller.signal });
     } catch {
-      if (controller.signal.aborted) throw new BoulevardError("TIMEOUT", UNAVAILABLE, true);
-      throw new BoulevardError("NETWORK", UNAVAILABLE, true);
+      throw unavailable(controller.signal.aborted ? "TIMEOUT" : "NETWORK");
     } finally {
       clearTimeout(timer);
     }
@@ -95,7 +80,7 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
       }),
     );
     // A failed token call is our misconfiguration (wrong secret, app not installed), not the visitor's.
-    if (!res.ok) throw new BoulevardError("AUTH_FAILED", UNAVAILABLE);
+    if (!res.ok) throw misconfigured("AUTH_FAILED");
     const body = (await res.json()) as { access_token: string; expires_in: number };
     tokenCache.set(cacheKey, { token: body.access_token, expiresAt: now() + (body.expires_in - 60) * 1000 });
     return body.access_token;
@@ -126,7 +111,7 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
           { operation, attempt },
         );
       } catch (error) {
-        if (error instanceof BoulevardError && error.retryable && !isMutation && attempt < maxRetries) {
+        if (error instanceof BookingError && error.retryable && !isMutation && attempt < maxRetries) {
           await sleep(backoff(attempt));
           continue;
         }
@@ -140,8 +125,7 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
         continue;
       }
       if (res.status === 429 && attempt < maxRetries) {
-        const text = await res.text();
-        await sleep(waitFrom429(text) ?? backoff(attempt));
+        await sleep(waitFrom429(await res.text()) ?? backoff(attempt));
         continue;
       }
       if (res.status === 503 && !isMutation && attempt < maxRetries) {
@@ -150,23 +134,26 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
       }
       if (!res.ok) {
         log.warn("boulevard http error", { operation, status: res.status });
-        throw new BoulevardError(res.status === 429 ? "RATE_LIMITED" : `HTTP_${res.status}`, UNAVAILABLE, res.status >= 500 || res.status === 429);
+        throw res.status === 429 || res.status >= 500 ? unavailable(`HTTP_${res.status}`) : misconfigured(`HTTP_${res.status}`);
       }
 
       const body = (await res.json()) as { data?: T; errors?: { __typename?: string; code?: string; message: string }[] };
       const [first] = body.errors ?? [];
       if (first) {
-        // BlvdError messages are written for end users; other GraphQL errors are ours to fix.
-        const code = first.__typename === "BlvdError" && first.code ? first.code : "GRAPHQL_ERROR";
-        log.warn("boulevard error", { operation, errorCode: code });
-        throw new BoulevardError(code, code === "GRAPHQL_ERROR" ? UNAVAILABLE : first.message);
+        // A BlvdError is about the request (its message is written for end users).
+        // Any other GraphQL error means our query is wrong: ours to fix.
+        const isBlvd = first.__typename === "BlvdError" && !!first.code;
+        const vendorCode = isBlvd ? first.code! : "GRAPHQL_ERROR";
+        log.warn("boulevard error", { operation, vendorCode });
+        if (!isBlvd) throw misconfigured(vendorCode);
+        throw new BookingError(ERROR_MAP[vendorCode] ?? "INVALID", first.message, vendorCode);
       }
       return body.data as T;
     }
   }
 
   return {
-    async startCart(locationId, serviceId) {
+    async startSession(locationId, serviceId) {
       const created = await call<{ createCart: { cart: { id: string } } }>(
         "CreateCart",
         `mutation CreateCart($locationId: ID!) { createCart(input: { locationId: $locationId }) { cart { id } } }`,
@@ -178,10 +165,11 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
         `mutation AddCartSelectedBookableItem($id: ID!, $itemId: ID!) { addCartSelectedBookableItem(input: { id: $id, itemId: $itemId }) { cart { id } } }`,
         { id: cartId, itemId: serviceId },
       );
-      return { cartId };
+      // In Boulevard, a booking session is a cart.
+      return { sessionId: cartId };
     },
 
-    async bookableDates(cartId, from, to) {
+    async availableDates(cartId, from, to) {
       const data = await call<{ cartBookableDates: { date: string }[] }>(
         "CartBookableDates",
         `query CartBookableDates($id: ID!, $from: Date!, $to: Date!) { cartBookableDates(id: $id, searchRangeLower: $from, searchRangeUpper: $to) { date } }`,
@@ -190,7 +178,7 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
       return data.cartBookableDates.map((d) => d.date);
     },
 
-    async bookableTimes(cartId, date) {
+    async availableTimes(cartId, date) {
       const data = await call<{ cartBookableTimes: { id: string; startTime: string }[] }>(
         "CartBookableTimes",
         `query CartBookableTimes($id: ID!, $date: Date!) { cartBookableTimes(id: $id, searchDate: $date) { id startTime } }`,
@@ -200,7 +188,7 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
       return data.cartBookableTimes.map((t) => ({ id: t.id, start: new Date(t.startTime).toISOString() }));
     },
 
-    async reserve(cartId, timeId) {
+    async hold(cartId, timeId) {
       const data = await call<{ reserveCartBookableItems: { cart: { startTime: string; expiresAt: string } } }>(
         "ReserveCartBookableItems",
         `mutation ReserveCartBookableItems($id: ID!, $timeId: ID!) { reserveCartBookableItems(input: { id: $id, bookableTimeId: $timeId }) { cart { startTime expiresAt } } }`,

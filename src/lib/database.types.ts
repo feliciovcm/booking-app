@@ -188,6 +188,32 @@ export type Database = {
         }
         Relationships: []
       }
+      service_provider_mappings: {
+        Row: {
+          provider: string
+          provider_service_id: string
+          treatment_id: string
+        }
+        Insert: {
+          provider: string
+          provider_service_id: string
+          treatment_id: string
+        }
+        Update: {
+          provider?: string
+          provider_service_id?: string
+          treatment_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "service_provider_mappings_treatment_id_fkey"
+            columns: ["treatment_id"]
+            isOneToOne: false
+            referencedRelation: "treatments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       treatments: {
         Row: {
           active: boolean

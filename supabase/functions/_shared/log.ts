@@ -56,13 +56,14 @@ export async function timed<T>(log: Log, msg: string, run: () => Promise<T>, fie
     log.info(msg, { ...fields, ok: true, ms: ms() });
     return result;
   } catch (error) {
-    const code = (error as { code?: unknown } | null)?.code;
+    const { code, vendorCode } = (error ?? {}) as { code?: unknown; vendorCode?: unknown };
     log.error(msg, {
       ...fields,
       ok: false,
       ms: ms(),
       errorName: error instanceof Error ? error.name : typeof error,
       errorCode: typeof code === "string" ? code : undefined,
+      vendorCode: typeof vendorCode === "string" ? vendorCode : undefined,
     });
     throw error;
   }

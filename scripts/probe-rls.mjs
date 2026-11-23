@@ -76,6 +76,8 @@ await expectPublicReadOnly("treatments", { slug: `probe-${Date.now()}`, name: "p
 await expectPublicReadOnly("locations", { slug: `probe-${Date.now()}`, name: "probe", address: "x", timezone: "UTC" });
 await expectNoRead("location_provider_mappings");
 await expectInsertBlocked("location_provider_mappings", { location_id: crypto.randomUUID(), provider: "x", provider_location_id: "x" });
+await expectNoRead("service_provider_mappings");
+await expectInsertBlocked("service_provider_mappings", { treatment_id: crypto.randomUUID(), provider: "x", provider_service_id: "x" });
 await expectNoRead("bookings");
 await expectInsertBlocked("bookings", {
   email: "attacker@test.dev", treatment_id: crypto.randomUUID(), location_id: crypto.randomUUID(),

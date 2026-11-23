@@ -14,7 +14,7 @@ set local role postgres;
 -- pgTAP functions are called without a schema prefix, so its schema must be on search_path.
 set local search_path = "$user", public, extensions;
 
-select plan(22);
+select plan(23);
 
 -- ------------------------------------------------------------
 -- Setup, as postgres (table owner, bypasses RLS). Fixed ids keep assertions readable.
@@ -76,6 +76,9 @@ select throws_ok(
 select throws_ok(
   $$ select * from public.location_provider_mappings $$, '42501', null,
   'anon cannot read location_provider_mappings');
+select throws_ok(
+  $$ select * from public.service_provider_mappings $$, '42501', null,
+  'anon cannot read service_provider_mappings');
 select throws_ok(
   $$ select * from public.bookings $$, '42501', null,
   'anon cannot read bookings');

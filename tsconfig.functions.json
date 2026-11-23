@@ -1,6 +1,6 @@
 {
   // Typechecks the runtime-agnostic edge function code (and its tests) with Node's tsc.
-  // index.ts and store.ts use Deno globals and npm: imports, so they're left to Deno.
+  // index.ts uses Deno globals, so it is left to Deno. store.ts gets postgres types from the devDependency.
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.functions.tsbuildinfo",
     "target": "ES2022",
@@ -19,5 +19,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["supabase/functions/**/*.ts"],
-  "exclude": ["supabase/functions/**/index.ts", "supabase/functions/**/store.ts"]
+  "exclude": ["supabase/functions/**/index.ts"]
 }
