@@ -5,6 +5,9 @@ import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../lib/supabase";
 
 export type Slot = { id: string; start: string };
 export type Hold = { start: string; expiresAt: string };
+/** Who the booking is for. Phone, when given, is E.164 (+12125550123). */
+export type Client = { firstName: string; lastName: string; email: string; phone?: string };
+export type Booking = { bookingId: string; start: string };
 
 export type BookingErrorCode =
   | "SLOT_UNAVAILABLE" // someone else got the time: pick another
@@ -27,7 +30,7 @@ export class BookingApiError extends Error {
 export const isBookingError = (error: unknown, code: BookingErrorCode) =>
   error instanceof BookingApiError && error.code === code;
 
-async function request<T>(body: Record<string, string>): Promise<T> {
+async function request<T>(body: Record<string, unknown>): Promise<T> {
   let res: Response;
   try {
     res = await fetch(`${SUPABASE_URL}/functions/v1/booking`, {
@@ -55,4 +58,7 @@ export const bookingApi = {
   dates: (sessionId: string, from: string, to: string) => request<{ dates: string[] }>({ action: "dates", sessionId, from, to }),
   times: (sessionId: string, date: string) => request<{ times: Slot[] }>({ action: "times", sessionId, date }),
   hold: (sessionId: string, slotId: string) => request<Hold>({ action: "hold", sessionId, slotId }),
+  summary: (sessionId: string) => request<{ hold: Hold | null }>({ action: "summary", sessionId }),
+  checkout: (input: { sessionId: string; location: string; service: string; idempotencyKey: string; client: Client; cardToken: string }) =>
+    request<Booking>({ action: "checkout", ...input }),
 };

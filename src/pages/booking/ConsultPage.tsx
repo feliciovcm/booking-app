@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { z } from "zod";
 import { consultRequestSchema, submitConsultRequest, type ConsultRequestInput } from "../../api/consult";
+import { Field } from "../../components/Field";
 
 type Status = "idle" | "submitting" | "sent" | "failed";
 type FieldErrors = Partial<Record<keyof ConsultRequestInput, string>>;
@@ -59,24 +60,5 @@ export function ConsultPage() {
         </button>
       </form>
     </>
-  );
-}
-
-function Field({
-  name,
-  label,
-  error,
-  ...input
-}: { name: keyof ConsultRequestInput; label: string; error?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
-  return (
-    <label>
-      {label}
-      <input name={name} aria-invalid={!!error} aria-describedby={error ? `${name}-error` : undefined} {...input} />
-      {error && (
-        <span id={`${name}-error`} className="field-error">
-          {error}
-        </span>
-      )}
-    </label>
   );
 }

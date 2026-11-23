@@ -12,8 +12,11 @@ export function BookingLayout() {
   // Back goes to the previous step, not browser history: a visitor who deep-linked in
   // (e.g. "Book PRP" on the marketing site) has no history here, and history(-1) would
   // take them off the app. Earlier choices stay in the URL, so the step shows them selected.
+  // After booking there's nothing to go back to.
   const backTo =
-    index > 0 ? stepUrl(FUNNEL_STEPS[index - 1], params) : index === -1 ? stepUrl("services", params) : null;
+    pathname.endsWith("/confirmed")
+      ? null
+      : index > 0 ? stepUrl(FUNNEL_STEPS[index - 1], params) : index === -1 ? stepUrl("services", params) : null;
 
   return (
     <div className="shell">

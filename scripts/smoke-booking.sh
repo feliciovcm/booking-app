@@ -56,6 +56,29 @@ S2=$(json "$(call '{"action":"start","location":"noho","service":"prp"}')" | jq 
 R=$(call "$(jq -nc --arg s "$S2" --arg t "$SLOT" '{action:"hold", sessionId:$s, slotId:$t}')")
 check "second session can't take the same time" "$(status "$R") $(json "$R" | jq -r .error.code)" "409 SLOT_UNAVAILABLE"
 
+# Checkout (step 4). Writes a real row to bookings with a fake example.com email.
+R=$(call "$(jq -nc --arg s "$S" '{action:"summary", sessionId:$s}')")
+check "summary shows the hold" "$(status "$R") $(json "$R" | jq -r .hold.start)" "200 $START"
+
+# The card goes straight to the vendor's tokenizer, like the browser will do. Our function only sees the token.
+CARD=$(curl -s "$URL/functions/v1/mock-boulevard/cards/tokenize" -H 'content-type: application/json' \
+  -d '{"card":{"name":"Smoke Test","number":"4242424242424242","cvv":"123","exp_month":12,"exp_year":2030,"address_postal_code":"10012"}}' | jq -r .token)
+check "test card tokenized" "${#CARD}" "36"
+
+IDEM=$(uuidgen | tr 'A-Z' 'a-z')
+checkout() { jq -nc --arg s "$1" --arg k "$2" --arg l "$3" --arg c "$CARD" \
+  '{action:"checkout", sessionId:$s, location:$l, service:"prp", idempotencyKey:$k, cardToken:$c,
+    client:{firstName:"Smoke", lastName:"Test", email:"smoke-test@example.com"}}'; }
+R=$(call "$(checkout "$S" "$IDEM" noho)")
+check "checkout 200 with the held start" "$(status "$R") $(json "$R" | jq -r .start)" "200 $START"
+BOOKING=$(json "$R" | jq -r .bookingId)
+R=$(call "$(checkout "$S" "$IDEM" noho)")
+check "retry with the same key returns the same booking" "$(json "$R" | jq -r .bookingId)" "$BOOKING"
+R=$(call "$(jq -nc --arg s "$S" '{action:"summary", sessionId:$s}')")
+check "no live hold after checkout" "$(json "$R" | jq -r .hold)" "null"
+R=$(call "$(checkout "$S" "$(uuidgen | tr 'A-Z' 'a-z')" grand-central)")
+check "another clinic's slug with this cart is refused" "$(status "$R") $(json "$R" | jq -r .error.code)" "400 INVALID_REQUEST"
+
 R=$(call '{"action":"start","location":"noho","service":"legacy-serum"}')
 check "inactive treatment is not bookable" "$(status "$R") $(json "$R" | jq -r .error.code)" "404 NOT_BOOKABLE"
 R=$(call '{"action":"times","sessionId":"gone-vendor|abc","date":"2026-12-01"}')

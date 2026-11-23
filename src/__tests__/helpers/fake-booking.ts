@@ -2,13 +2,21 @@ import { vi } from "vitest";
 
 // A fake of our `booking` edge function, installed as global fetch. It follows the same
 // contract (actions, sessionId, error codes), records every call, and lets a test
-// script the next response for an action.
+// script the next response for an action. It also fakes the vendor's card tokenizer,
+// which the browser calls directly (any URL ending in /cards/tokenize).
 
 type Reply = { status: number; body: unknown };
 
 export function installFakeBooking() {
   const state = {
-    calls: [] as { action: string; body: Record<string, string>; headers: Headers }[],
+    calls: [] as { action: string; body: Record<string, unknown>; headers: Headers }[],
+    tokenizeCalls: [] as { url: string; body: { card: Record<string, unknown> } }[],
+    /** Set to make the tokenizer refuse the card with this error. */
+    cardError: null as string | null,
+    /** What summary returns: the session's live hold, or null. */
+    hold: { start: "2026-11-25T14:00:00.000Z", expiresAt: "2026-11-24T15:30:00.000Z" } as { start: string; expiresAt: string } | null,
+    /** Bookings by idempotency key: the same key returns the same booking. */
+    bookings: {} as Record<string, { bookingId: string; start: string }>,
     sessions: 0,
     dates: ["2026-11-25", "2026-11-26"],
     times: {
@@ -26,7 +34,11 @@ export function installFakeBooking() {
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   const error = (status: number, code: string, message: string) => json(status, { error: { code, message } });
 
-  vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    if (url.endsWith("/cards/tokenize")) {
+      state.tokenizeCalls.push({ url, body: JSON.parse(String(init.body)) });
+      return state.cardError ? json(400, { success: false, error: state.cardError }) : json(200, { success: true, token: "tok-fake-1" });
+    }
     const body = JSON.parse(String(init.body)) as Record<string, string>;
     state.calls.push({ action: body.action, body, headers: new Headers(init.headers) });
     const scripted = state.next[body.action]?.shift();
@@ -46,6 +58,13 @@ export function installFakeBooking() {
           start: Object.values(state.times).flat().find((t) => t.id === body.slotId)!.start,
           expiresAt: "2026-11-24T15:30:00.000Z", // 30 minutes after the tests' fixed "now"
         });
+      case "summary":
+        return json(200, { hold: state.hold });
+      case "checkout": {
+        const key = body.idempotencyKey;
+        state.bookings[key] ??= { bookingId: `bk${Object.keys(state.bookings).length + 1}`, start: state.hold!.start };
+        return json(200, state.bookings[key]);
+      }
       default:
         return error(400, "INVALID_REQUEST", "Bad request");
     }

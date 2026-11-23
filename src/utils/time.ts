@@ -24,3 +24,6 @@ export function formatDay(date: string): string {
 export function formatTime(iso: string, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone }).format(new Date(iso));
 }
+
+/** Whole minutes from now until an instant, at least 1 (for "we'll keep it for N minutes"). */
+export const minutesUntil = (iso: string, now = Date.now()) => Math.max(1, Math.round((Date.parse(iso) - now) / 60_000));

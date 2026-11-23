@@ -2,7 +2,7 @@ import { Link, Navigate } from "react-router";
 import { BookingApiError } from "../../api/booking";
 import { useAvailableDates, useAvailableTimes, useBookingSession, useHold } from "../../hooks/booking";
 import { useLocations, useTreatments } from "../../hooks/catalog";
-import { addDays, formatDay, formatTime, todayIn } from "../../utils/time";
+import { addDays, formatDay, formatTime, minutesUntil, todayIn } from "../../utils/time";
 import { QueryState } from "../../components/QueryState";
 import { useFunnel } from "../../hooks/funnel";
 import { stepUrl } from "../../routes/funnel";
@@ -109,16 +109,14 @@ export function SlotStep() {
           </h2>
           {/* A duration, not a clock time: "until 3:58 AM" in the clinic's zone confuses visitors elsewhere. */}
           <p className="muted">We'll keep this time for you for {minutesUntil(hold.data.expiresAt)} minutes.</p>
-          <button type="button" className="button" disabled title="Checkout comes in step 4">
+          <Link to={stepUrl("checkout", params)} className="button">
             Continue
-          </button>
+          </Link>
         </section>
       )}
     </>
   );
 }
-
-const minutesUntil = (iso: string) => Math.max(1, Math.round((Date.parse(iso) - Date.now()) / 60_000));
 
 // The server's message is written for visitors, so show it; add a way forward when there is one.
 function BookingProblem({ error, retry }: { error: Error; retry?: () => void }) {

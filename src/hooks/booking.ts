@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { bookingApi, isBookingError } from "../api/booking";
+import { useEffect } from "react";
+import { bookingApi, isBookingError, type Client } from "../api/booking";
 
 // Retry only what retrying can fix, at most twice.
 const retryTransient = (failures: number, error: Error) =>
@@ -107,4 +108,62 @@ export function useHold(session: Session) {
       if (isBookingError(error, "SLOT_UNAVAILABLE")) void queryClient.invalidateQueries({ queryKey: ["booking-times", session.data] });
     },
   });
+}
+
+/** The live hold on this session, read from the vendor: the checkout page survives a refresh. */
+export function useHoldSummary(session: Session) {
+  const sessionId = session.data;
+  return useQuery({
+    queryKey: ["booking-summary", sessionId],
+    enabled: Boolean(sessionId),
+    staleTime: 0, // a hold can lapse at any moment
+    retry: retryTransient,
+    queryFn: () => bookingApi.summary(sessionId!).then((r) => r.hold, resetOnExpiry(session)),
+  });
+}
+
+// One idempotency key per checkout attempt, kept per session. Retries and a refresh reuse
+// it, so the server answers "the same booking" instead of booking twice. A definite "no"
+// (the time is gone, the hold lapsed) ends the attempt, and the next one gets a new key.
+const checkoutKeyName = (sessionId: string) => `booking-checkout:${sessionId}`;
+function checkoutKey(sessionId: string): string {
+  const saved = storage.get(checkoutKeyName(sessionId));
+  if (saved) return saved;
+  const key = crypto.randomUUID();
+  storage.set(checkoutKeyName(sessionId), key);
+  return key;
+}
+
+export function useCheckout(session: Session, service: string, location: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    // Only the token from the vendor's tokenizer comes in here, never card data: mutation
+    // variables live in the query cache.
+    mutationFn: ({ client, cardToken }: { client: Client; cardToken: string }) => {
+      const sessionId = session.data!;
+      return bookingApi.checkout({ sessionId, location, service, idempotencyKey: checkoutKey(sessionId), client, cardToken });
+    },
+    // Unlike other mutations, checkout is safe to retry: the same key can't book twice.
+    retry: retryTransient,
+    onSuccess: () => {
+      // The booking is done. Drop the session and key so the next booking starts clean.
+      storage.remove(checkoutKeyName(session.data!));
+      storage.remove(storageKey(service, location));
+    },
+    onError: (error) => {
+      if (isBookingError(error, "SLOT_UNAVAILABLE") || isBookingError(error, "SESSION_EXPIRED")) {
+        storage.remove(checkoutKeyName(session.data!));
+        void queryClient.invalidateQueries({ queryKey: ["booking-summary", session.data] });
+      }
+      if (isBookingError(error, "SESSION_EXPIRED")) session.reset();
+    },
+  });
+}
+
+/** After a booking: forget its session in memory too, so going back starts a new one. */
+export function useForgetBookingSession(service: string | undefined, location: string | undefined) {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    queryClient.removeQueries({ queryKey: ["booking-session", service, location] });
+  }, [queryClient, service, location]);
 }

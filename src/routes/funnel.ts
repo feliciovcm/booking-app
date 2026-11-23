@@ -3,7 +3,7 @@
 // - refresh and the back button keep the visitor's choices
 // - analytics see the step and choices in the page URL
 
-export const FUNNEL_STEPS = ["services", "location", "slot"] as const;
+export const FUNNEL_STEPS = ["services", "location", "slot", "checkout"] as const;
 export type FunnelStep = (typeof FUNNEL_STEPS)[number];
 
 export type FunnelParams = { service?: string; location?: string; date?: string };
