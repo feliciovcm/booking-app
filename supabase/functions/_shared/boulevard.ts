@@ -197,6 +197,91 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
       const cart = data.reserveCartBookableItems.cart;
       return { start: new Date(cart.startTime).toISOString(), expiresAt: cart.expiresAt };
     },
+
+    async summary(cartId) {
+      // 1. Ask Boulevard for the cart: which clinic, which service, and its reservation.
+      const data = await call<{
+        cart: {
+          location: { id: string };
+          selectedItems: { item: { id: string } }[];
+          startTime: string | null;
+          expiresAt: string | null;
+        } | null;
+      }>(
+        "Cart",
+        `query Cart($id: ID!) { cart(id: $id) { location { id } selectedItems { item { id } } startTime expiresAt } }`,
+        { id: cartId },
+      );
+
+      // 2. An unknown cart comes back as null, not as an error: our session is gone.
+      const cart = data.cart;
+      if (!cart) throw new BookingError("SESSION_EXPIRED", "Your booking session expired. Please start again.", "CART_NOT_FOUND");
+
+      // 3. Our carts hold exactly one service (startSession adds it). Anything else isn't a
+      //    cart we made, so fail loudly instead of checking only part of it.
+      if (cart.selectedItems.length !== 1) {
+        throw new BookingError("SESSION_EXPIRED", "Your booking session expired. Please start again.", "CART_ITEM_COUNT");
+      }
+      const [selected] = cart.selectedItems;
+
+      // 4. A hold is live only while both times are set. Boulevard clears them when the
+      //    30 minutes run out, and expiresAt is also null once the cart is checked out.
+      const hold =
+        cart.startTime && cart.expiresAt
+          ? { start: new Date(cart.startTime).toISOString(), expiresAt: cart.expiresAt }
+          : null;
+
+      // 5. Vendor ids out, in our contract's names. The handler compares them with the mapping.
+      return { vendorLocationId: cart.location.id, vendorServiceId: selected.item.id, hold };
+    },
+
+    async checkout(cartId, client, cardToken) {
+      const CHECKOUT = `mutation CheckoutCart($id: ID!) { checkoutCart(input: { id: $id }) { appointments { appointmentId } } }`;
+      type Checkout = { checkoutCart: { appointments: { appointmentId: string }[] } };
+      const confirmation = (data: Checkout) => {
+        const [appointment] = data.checkoutCart.appointments;
+        if (!appointment) throw misconfigured("NO_APPOINTMENT"); // a checkout that booked nothing: Boulevard's side or our cart setup
+        return { confirmationId: appointment.appointmentId };
+      };
+
+      // 1. Already checked out? Then this is a retry after a lost response. A completed cart
+      //    refuses every change (CART_COMPLETED), so skip straight to checkoutCart, which
+      //    returns the same appointment again. (The mock does; confirm on Boulevard's sandbox.)
+      const state = await call<{ cart: { completedAt: string | null } | null }>(
+        "CartCompletedAt",
+        `query CartCompletedAt($id: ID!) { cart(id: $id) { completedAt } }`,
+        { id: cartId },
+      );
+      if (!state.cart) throw new BookingError("SESSION_EXPIRED", "Your booking session expired. Please start again.", "CART_NOT_FOUND");
+      if (state.cart.completedAt) return confirmation(await call<Checkout>("CheckoutCart", CHECKOUT, { id: cartId }));
+
+      // 2. Who the appointment is for. Boulevard wants E.164 phone numbers and fails the
+      //    whole mutation on a bad one, so the handler validates it first. No phone, no field.
+      await call(
+        "UpdateCart",
+        `mutation UpdateCart($id: ID!, $client: CartClientInformationInput!) { updateCart(input: { id: $id, clientInformation: $client }) { cart { id } } }`,
+        {
+          id: cartId,
+          client: {
+            firstName: client.firstName,
+            lastName: client.lastName,
+            email: client.email,
+            ...(client.phone ? { phoneNumber: client.phone } : {}),
+          },
+        },
+      );
+
+      // 3. The card on file, as the token the browser got from the Tokenization API.
+      //    select: true makes it the cart's payment method.
+      await call(
+        "AddCartCardPaymentMethod",
+        `mutation AddCartCardPaymentMethod($id: ID!, $token: String!) { addCartCardPaymentMethod(input: { id: $id, token: $token, select: true }) { cart { id } } }`,
+        { id: cartId, token: cardToken },
+      );
+
+      // 4. Book it. A lapsed hold fails here with CART_MISSING_ITEM_TIME -> SESSION_EXPIRED.
+      return confirmation(await call<Checkout>("CheckoutCart", CHECKOUT, { id: cartId }));
+    },
   };
 }
 

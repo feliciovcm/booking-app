@@ -3,6 +3,7 @@
 //
 //   POST /mock-boulevard/oauth2/token          anonymous grant (browser) or client_credentials (server)
 //   POST /mock-boulevard/api/2026-06/client    the Client API (GraphQL), Bearer token required
+//   POST /mock-boulevard/cards/tokenize        the Tokenization API: card in, opaque token out
 //
 // Failures: `x-mock-fail: 429 | 500 | 503 | timeout` forces one; otherwise a random share
 // of API calls fails (failureRate) and every API call waits a random latency.
@@ -77,6 +78,7 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
     if (req.method === "OPTIONS") response = new Response(null, { status: 204, headers: CORS });
     else if (req.method === "POST" && path === "/oauth2/token") response = await token(req, requestId, deps);
     else if (req.method === "POST" && path === API_PATH) response = await api(req, requestId, deps, meta);
+    else if (req.method === "POST" && path === "/cards/tokenize") response = await tokenize(req, requestId, deps);
     else response = json(404, { errors: [{ message: `No route for ${req.method} ${path}` }] }, requestId);
 
     // No personal data in logs: ids, operation, error codes and timing only.
@@ -165,4 +167,46 @@ async function api(req: Request, requestId: string, deps: Deps, meta: Record<str
   });
   if (errors) meta.errorCodes = errors.map((e) => ("code" in e ? e.code : "GRAPHQL"));
   return json(200, errors ? { data: result.data ?? null, errors } : { data: result.data }, requestId);
+}
+
+// The Tokenization API: the browser posts the card here directly, so card data never
+// passes through our server (that keeps us out of PCI DSS scope). The docs show
+//   { card: { name, number, cvv, exp_month, exp_year, address_postal_code } }, all required
+//   -> 200 { success: true, token: "<uuid>" }
+// They don't document failures; the 400 { success: false, error } below is mock-only.
+// The mock keeps nothing: the card is checked and dropped, and the token is random.
+async function tokenize(req: Request, requestId: string, deps: Deps): Promise<Response> {
+  let card: Record<string, unknown> | undefined;
+  try {
+    card = ((await req.json()) as { card?: Record<string, unknown> }).card;
+  } catch {
+    // handled below
+  }
+  const problem = card ? cardProblem(card, deps.now()) : "Missing card";
+  if (problem) return json(400, { success: false, error: problem }, requestId);
+  return json(200, { success: true, token: crypto.randomUUID() }, requestId);
+}
+
+function cardProblem(card: Record<string, unknown>, now: Date): string | null {
+  const { name, number, cvv, exp_month: month, exp_year: year, address_postal_code: postal } = card;
+  if (typeof name !== "string" || !name.trim()) return "Missing cardholder name";
+  if (typeof number !== "string" || !/^\d{12,19}$/.test(number) || !luhn(number)) return "Invalid card number";
+  if (typeof cvv !== "string" || !/^\d{3,4}$/.test(cvv)) return "Invalid cvv";
+  if (!Number.isInteger(month) || !Number.isInteger(year) || (month as number) < 1 || (month as number) > 12) return "Invalid expiry";
+  // A card is valid through the last day of its expiry month.
+  const thisMonth = now.getUTCFullYear() * 12 + now.getUTCMonth();
+  if ((year as number) * 12 + (month as number) - 1 < thisMonth) return "Card expired";
+  if (typeof postal !== "string" || !postal.trim()) return "Missing postal code";
+  return null;
+}
+
+// The check digit every real card number has: catches typos, not fraud.
+function luhn(number: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < number.length; i++) {
+    let digit = Number(number[number.length - 1 - i]);
+    if (i % 2 === 1) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
+    sum += digit;
+  }
+  return sum % 10 === 0;
 }

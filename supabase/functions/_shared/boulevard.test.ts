@@ -100,6 +100,101 @@ describe("booking flow against the mock", () => {
   });
 });
 
+// Step 4: summary and checkout.
+const CLIENT = { firstName: "Avery", lastName: "Quinn", email: "avery.quinn@example.com", phone: "+12125550123" };
+const TEST_CARD = { name: "Test Visitor", number: "4242424242424242", cvv: "123", exp_month: 12, exp_year: 2030, address_postal_code: "10012" };
+
+/** A card token from the mock's Tokenization API, the way the browser will get one. */
+async function cardToken(): Promise<string> {
+  const res = await config.fetch!(`${BASE}/cards/tokenize`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ card: TEST_CARD }) });
+  return (await res.json()).token;
+}
+
+/** Reads a cart straight from the mock, to see what the adapter sent without depending on how it sent it. */
+async function mockCart(cartId: string) {
+  const tokenRes = await config.fetch!(`${BASE}/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ grant_type: "client_credentials", client_id: "app", client_secret: "c2VjcmV0", business_id: "biz", resource: `${BASE}/api/2026-06/client` }),
+  });
+  const { access_token } = await tokenRes.json();
+  const res = await config.fetch!(`${BASE}/api/2026-06/client`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${access_token}` },
+    body: JSON.stringify({ operationName: "TestReadCart", query: "query TestReadCart($id: ID!) { cart(id: $id) { completedAt clientInformation { email firstName lastName phoneNumber } } }", variables: { id: cartId } }),
+  });
+  return (await res.json()).data.cart;
+}
+
+/** A cart with a held time: what checkout starts from. */
+async function heldCart() {
+  const b = blvd();
+  const { sessionId } = await b.startSession(NOHO, PRP);
+  const [slot] = await b.availableTimes(sessionId, "2026-11-25");
+  const hold = await b.hold(sessionId, slot.id);
+  return { b, sessionId, hold };
+}
+
+describe("summary", () => {
+  it("returns the vendor's location and service, and no hold before one is made", async () => {
+    const b = blvd();
+    const { sessionId } = await b.startSession(NOHO, PRP);
+    expect(await b.summary(sessionId)).toEqual({ vendorLocationId: NOHO, vendorServiceId: PRP, hold: null });
+  });
+
+  it("returns the live hold, in the same shape hold() returned", async () => {
+    const { b, sessionId, hold } = await heldCart();
+    expect(await b.summary(sessionId)).toEqual({ vendorLocationId: NOHO, vendorServiceId: PRP, hold });
+  });
+
+  it("returns no hold once the 30 minutes are up", async () => {
+    const { b, sessionId } = await heldCart();
+    clock.now += 31 * 60_000;
+    expect((await b.summary(sessionId)).hold).toBeNull();
+  });
+});
+
+describe("checkout", () => {
+  it("books the held time and returns Boulevard's appointment id as the confirmation", async () => {
+    const { b, sessionId } = await heldCart();
+    const { confirmationId } = await b.checkout(sessionId, CLIENT, await cardToken());
+    expect(confirmationId).toMatch(/^urn:blvd:Appointment:/);
+
+    const cart = await mockCart(sessionId);
+    expect(cart.completedAt).not.toBeNull();
+    expect(cart.clientInformation).toEqual({ email: CLIENT.email, firstName: "Avery", lastName: "Quinn", phoneNumber: CLIENT.phone });
+  });
+
+  it("leaves the phone out when there isn't one", async () => {
+    const { b, sessionId } = await heldCart();
+    await b.checkout(sessionId, { firstName: "Avery", lastName: "Quinn", email: CLIENT.email }, await cardToken());
+    expect((await mockCart(sessionId)).clientInformation.phoneNumber).toBeNull();
+  });
+
+  it("is safe to retry: a session that already checked out returns the same confirmation", async () => {
+    const { b, sessionId } = await heldCart();
+    const token = await cardToken();
+    const first = await b.checkout(sessionId, CLIENT, token);
+    expect(await b.checkout(sessionId, CLIENT, token)).toEqual(first);
+  });
+
+  it("says SESSION_EXPIRED when the hold lapsed before checkout", async () => {
+    const { b, sessionId } = await heldCart();
+    clock.now += 31 * 60_000;
+    await expect(b.checkout(sessionId, CLIENT, await cardToken())).rejects.toMatchObject({ code: "SESSION_EXPIRED", vendorCode: "CART_MISSING_ITEM_TIME" });
+  });
+
+  it("never logs the visitor's details or the card token", async () => {
+    const { b, sessionId } = await heldCart();
+    const token = await cardToken();
+    lines = [];
+    await b.checkout(sessionId, CLIENT, token);
+    const logged = JSON.stringify(lines);
+    for (const secret of [CLIENT.email, CLIENT.firstName, CLIENT.lastName, CLIENT.phone, token]) expect(logged).not.toContain(secret);
+    expect(lines.some((l) => l.operation === "CheckoutCart" && l.ok === true)).toBe(true);
+  });
+});
+
 describe("retries", () => {
   it("retries a query after a 503, with backoff", async () => {
     const b = blvd();

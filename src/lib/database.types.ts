@@ -50,8 +50,6 @@ export type Database = {
           provider_booking_id: string | null
           slot_start: string
           status: string
-          stripe_customer_id: string | null
-          stripe_setup_intent_id: string | null
           treatment_id: string
           updated_at: string
           user_id: string | null
@@ -66,8 +64,6 @@ export type Database = {
           provider_booking_id?: string | null
           slot_start: string
           status?: string
-          stripe_customer_id?: string | null
-          stripe_setup_intent_id?: string | null
           treatment_id: string
           updated_at?: string
           user_id?: string | null
@@ -82,8 +78,6 @@ export type Database = {
           provider_booking_id?: string | null
           slot_start?: string
           status?: string
-          stripe_customer_id?: string | null
-          stripe_setup_intent_id?: string | null
           treatment_id?: string
           updated_at?: string
           user_id?: string | null

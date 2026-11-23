@@ -258,6 +258,41 @@ describe("Client API booking flow", () => {
   });
 });
 
+describe("cards/tokenize", () => {
+  const card = { name: "Test Visitor", number: "4242424242424242", cvv: "123", exp_month: 12, exp_year: 2030, address_postal_code: "10012" };
+  const tokenize = (body: unknown) => post("/cards/tokenize", JSON.stringify(body), { "content-type": "application/json" });
+
+  it("turns a test card into an opaque token, with no bearer token needed", async () => {
+    const res = await tokenize({ card });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(JSON.stringify(body)).not.toContain("4242");
+  });
+
+  it("refuses a bad card", async () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ ...card, number: "4242424242424241" }, "Invalid card number"],
+      [{ ...card, cvv: "12" }, "Invalid cvv"],
+      [{ ...card, exp_month: 13 }, "Invalid expiry"],
+      [{ ...card, exp_month: 10, exp_year: 2026 }, "Card expired"], // the clock says November 2026
+      [{ ...card, address_postal_code: "" }, "Missing postal code"],
+    ];
+    for (const [bad, error] of cases) {
+      const res = await tokenize({ card: bad });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ success: false, error });
+    }
+    expect((await tokenize({ card: { ...card, exp_month: 11, exp_year: 2026 } })).status).toBe(200); // valid through November
+  });
+
+  it("never logs card data", async () => {
+    await tokenize({ card });
+    expect(JSON.stringify(logs)).not.toMatch(/4242|Test Visitor|10012/);
+  });
+});
+
 describe("failures", () => {
   it("forces a 429 that says how long to wait in the message, not a header", async () => {
     const { status, body } = await gql("{ business { id } }", {}, { "x-mock-fail": "429" });

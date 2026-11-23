@@ -4,7 +4,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createBoulevard } from "../_shared/boulevard.ts";
-import { createHandler, type Mapping } from "./handler.ts";
+import { createHandler, type BookingRow, type BookingsRepo, type Mapping } from "./handler.ts";
 
 const env = (name: string) => {
   const value = Deno.env.get(name);
@@ -15,8 +15,8 @@ const env = (name: string) => {
 // The new API keys arrive as JSON dictionaries keyed by name ("default", ...).
 const publishableKeys = Object.values(JSON.parse(env("SUPABASE_PUBLISHABLE_KEYS")) as Record<string, string>);
 const secretKey = (JSON.parse(env("SUPABASE_SECRET_KEYS")) as Record<string, string>).default;
-// Secret key = service_role: bypasses RLS. Only used for the mapping tables, never with
-// anything the caller controls beyond the two slugs.
+// Secret key = service_role: bypasses RLS. Used for the mapping tables (read) and the
+// bookings table (write). Every value written is validated by the handler first.
 const admin = createClient(env("SUPABASE_URL"), secretKey, { auth: { persistSession: false } });
 
 const boulevardConfig = {
@@ -29,17 +29,17 @@ const boulevardConfig = {
 async function resolve(locationSlug: string, serviceSlug: string): Promise<Mapping | null> {
   const { data: location, error: locationError } = await admin
     .from("locations")
-    .select("location_provider_mappings(provider, provider_location_id)")
+    .select("id, location_provider_mappings(provider, provider_location_id)")
     .eq("slug", locationSlug)
     .eq("active", true)
     .maybeSingle();
   if (locationError) throw locationError;
   const vendor = location?.location_provider_mappings as { provider: string; provider_location_id: string } | null | undefined;
-  if (!vendor) return null;
+  if (!location || !vendor) return null;
 
   const { data: service, error: serviceError } = await admin
     .from("service_provider_mappings")
-    .select("provider_service_id, treatments!inner(slug, active)")
+    .select("treatment_id, provider_service_id, treatments!inner(slug, active)")
     .eq("provider", vendor.provider)
     .eq("treatments.slug", serviceSlug)
     .eq("treatments.active", true)
@@ -47,14 +47,84 @@ async function resolve(locationSlug: string, serviceSlug: string): Promise<Mappi
   if (serviceError) throw serviceError;
   if (!service) return null;
 
-  return { provider: vendor.provider, vendorLocationId: vendor.provider_location_id, vendorServiceId: service.provider_service_id };
+  return {
+    provider: vendor.provider,
+    vendorLocationId: vendor.provider_location_id,
+    vendorServiceId: service.provider_service_id,
+    treatmentId: service.treatment_id,
+    locationId: location.id,
+  };
 }
+
+// The bookings table in the handler's names. Postgres returns timestamptz as
+// "2026-11-25 14:00:00+00" style text; normalize it so a retry answers byte for byte the same.
+const BOOKING_COLUMNS = "id, idempotency_key, status, email, treatment_id, location_id, slot_start, provider, provider_booking_id";
+type BookingRecord = {
+  id: string;
+  idempotency_key: string;
+  status: BookingRow["status"];
+  email: string;
+  treatment_id: string;
+  location_id: string;
+  slot_start: string;
+  provider: string;
+  provider_booking_id: string | null;
+};
+const toRow = (r: BookingRecord): BookingRow => ({
+  id: r.id,
+  idempotencyKey: r.idempotency_key,
+  status: r.status,
+  email: r.email,
+  treatmentId: r.treatment_id,
+  locationId: r.location_id,
+  slotStart: new Date(r.slot_start).toISOString(),
+  provider: r.provider,
+  providerBookingId: r.provider_booking_id,
+});
+
+const bookings: BookingsRepo = {
+  async findByKey(key) {
+    const { data, error } = await admin.from("bookings").select(BOOKING_COLUMNS).eq("idempotency_key", key).maybeSingle();
+    if (error) throw error;
+    return data ? toRow(data as BookingRecord) : null;
+  },
+  async insertHeld(row) {
+    // "insert ... on conflict (idempotency_key) do nothing": a concurrent retry with the same
+    // key can't create a second row. Then read whichever row won.
+    const { error } = await admin.from("bookings").upsert(
+      {
+        idempotency_key: row.idempotencyKey,
+        email: row.email,
+        treatment_id: row.treatmentId,
+        location_id: row.locationId,
+        slot_start: row.slotStart,
+        provider: row.provider,
+        status: "held",
+      },
+      { onConflict: "idempotency_key", ignoreDuplicates: true },
+    );
+    if (error) throw error;
+    const saved = await bookings.findByKey(row.idempotencyKey);
+    if (!saved) throw new Error("booking row missing after insert");
+    return saved;
+  },
+  async confirm(id, providerBookingId) {
+    const { error } = await admin.from("bookings").update({ status: "confirmed", provider_booking_id: providerBookingId }).eq("id", id);
+    if (error) throw error;
+  },
+  async expire(id) {
+    // Only a held row can expire; never downgrade one that got confirmed meanwhile.
+    const { error } = await admin.from("bookings").update({ status: "expired" }).eq("id", id).eq("status", "held");
+    if (error) throw error;
+  },
+};
 
 export default {
   fetch: createHandler({
     publishableKeys,
     allowedOrigins: env("BOOKING_ALLOWED_ORIGINS").split(",").map((o) => o.trim()),
     resolve,
+    bookings,
     // Keys match `provider` in the mapping tables.
     providers: {
       boulevard: (log) => createBoulevard(boulevardConfig, log),

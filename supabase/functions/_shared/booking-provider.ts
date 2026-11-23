@@ -5,6 +5,12 @@
 /** A bookable time. `id` is opaque: pass it back to hold(). `start` is UTC ISO. */
 export type Slot = { id: string; start: string };
 
+/** A hold on a time. `start` and `expiresAt` are UTC ISO. */
+export type Hold = { start: string; expiresAt: string };
+
+/** Who the booking is for. Phone, when given, is E.164 (+13105555555). */
+export type Client = { firstName: string; lastName: string; email: string; phone?: string };
+
 export interface BookingProvider {
   /** Starts a booking session for one service at one location (vendor ids from our mapping tables). */
   startSession(vendorLocationId: string, vendorServiceId: string): Promise<{ sessionId: string }>;
@@ -12,7 +18,11 @@ export interface BookingProvider {
   availableDates(sessionId: string, from: string, to: string): Promise<string[]>;
   availableTimes(sessionId: string, date: string): Promise<Slot[]>;
   /** Holds a time for this session until expiresAt. */
-  hold(sessionId: string, slotId: string): Promise<{ start: string; expiresAt: string }>;
+  hold(sessionId: string, slotId: string): Promise<Hold>;
+  /** What the vendor says this session is for, and its live hold (null if none or lapsed). */
+  summary(sessionId: string): Promise<{ vendorLocationId: string; vendorServiceId: string; hold: Hold | null }>;
+  /** Books the held time. Safe to retry: a session that already checked out returns the same confirmation. */
+  checkout(sessionId: string, client: Client, cardToken: string): Promise<{ confirmationId: string }>;
 }
 
 /**

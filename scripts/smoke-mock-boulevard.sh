@@ -56,6 +56,10 @@ check "checkout returns an appointment" "${APPT:0:21}" "urn:blvd:Appointment:"
 check "checkout retry returns the same appointment" "$(gql "$CHECKOUT" "{\"id\":\"$A\"}" | jq -r '.data.checkoutCart.appointments[0].appointmentId')" "$APPT"
 check "checkout with nothing filled in" "$(gql "$CHECKOUT" "{\"id\":\"$B\"}" | jq -r '.errors[0].code')" "CART_MISSING_CLIENT_INFORMATION"
 
+tokenize() { curl -s "$BASE/cards/tokenize" -H 'content-type: application/json' -d "{\"card\":{\"name\":\"Test Visitor\",\"number\":\"$1\",\"cvv\":\"123\",\"exp_month\":12,\"exp_year\":2030,\"address_postal_code\":\"10012\"}}"; }
+check "test card tokenizes" "$(tokenize 4242424242424242 | jq -r '.success')" "true"
+check "bad card number refused" "$(tokenize 4242424242424241 | jq -r '.error')" "Invalid card number"
+
 check "no token is 401" "$(curl -s -o /dev/null -w '%{http_code}' "$API" -H 'content-type: application/json' -d '{"query":"{ business { id } }"}')" "401"
 check "forced 429" "$(curl -s -o /dev/null -w '%{http_code}' "$API" -H "authorization: Bearer $TOKEN" -H 'x-mock-fail: 429' -d '{"query":"{ business { id } }"}')" "429"
 check "forced timeout trips a 3s client timeout" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$API" -H "authorization: Bearer $TOKEN" -H 'x-mock-fail: timeout' -d '{"query":"{ business { id } }"}' || true)" "000"
