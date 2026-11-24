@@ -53,6 +53,7 @@ export type Database = {
           treatment_id: string
           updated_at: string
           user_id: string | null
+          vendor_updated_at: string | null
         }
         Insert: {
           created_at?: string
@@ -67,6 +68,7 @@ export type Database = {
           treatment_id: string
           updated_at?: string
           user_id?: string | null
+          vendor_updated_at?: string | null
         }
         Update: {
           created_at?: string
@@ -81,6 +83,7 @@ export type Database = {
           treatment_id?: string
           updated_at?: string
           user_id?: string | null
+          vendor_updated_at?: string | null
         }
         Relationships: [
           {
@@ -279,7 +282,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      record_webhook_attempt: {
+        Args: { p_error?: string; p_event_id: string; p_provider: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

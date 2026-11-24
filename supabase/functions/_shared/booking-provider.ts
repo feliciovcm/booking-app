@@ -26,6 +26,21 @@ export interface BookingProvider {
 }
 
 /**
+ * A vendor's webhook, in our terms: what happened to which appointment. Each vendor's
+ * parser produces this, so processing never reads a vendor payload. Times are UTC ISO.
+ */
+export type AppointmentChange = {
+  kind: "created" | "rescheduled" | "cancelled";
+  vendorAppointmentId: string;
+  vendorLocationId: string;
+  /** The appointment's start after this change. */
+  start: string;
+  email: string | null;
+  /** When the vendor says it happened. Orders changes that arrive out of order. */
+  occurredAt: string;
+};
+
+/**
  * Our error codes, the only ones callers handle:
  * - SLOT_UNAVAILABLE: someone else got the time; pick another
  * - SESSION_EXPIRED: the hold lapsed or the session is gone; start the time step again
