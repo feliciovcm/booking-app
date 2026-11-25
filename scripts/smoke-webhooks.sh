@@ -56,14 +56,17 @@ TIMES=$(json "$(call "$(jq -nc --arg s "$S" --arg d "$DATE" '{action:"times", se
 SLOT=$(echo "$TIMES" | jq -r '.times[0].id'); START=$(echo "$TIMES" | jq -r '.times[0].start')
 # Another free time the same day, for the staff reschedule below.
 NEW_START=$(echo "$TIMES" | jq -r '.times[-1].start')
-call "$(jq -nc --arg s "$S" --arg t "$SLOT" '{action:"hold", sessionId:$s, slotId:$t}')" >/dev/null
+R=$(call "$(jq -nc --arg s "$S" --arg t "$SLOT" '{action:"hold", sessionId:$s, slotId:$t}')")
+check "hold 200" "${R%% *} $(json "$R" | jq -r '.error.code // "ok"')" "200 ok"
 CARD=$(curl -s "$MOCK/cards/tokenize" -H 'content-type: application/json' \
   -d '{"card":{"name":"Smoke Test","number":"4242424242424242","cvv":"123","exp_month":12,"exp_year":2030,"address_postal_code":"10012"}}' | jq -r .token)
 R=$(call "$(jq -nc --arg s "$S" --arg k "$(uuidgen | tr 'A-Z' 'a-z')" --arg c "$CARD" \
   '{action:"checkout", sessionId:$s, location:"noho", service:"prp", idempotencyKey:$k, cardToken:$c,
     client:{firstName:"Smoke", lastName:"Test", email:"smoke-test@example.com"}}')")
-check "checkout 200" "${R%% *}" "200"
+check "checkout 200" "${R%% *} $(json "$R" | jq -r '.error.code // "ok"')" "200 ok"
 BOOKING=$(json "$R" | jq -r .bookingId)
+# Everything below follows this booking; without one there's nothing to check.
+if [ "$BOOKING" = "null" ]; then echo "$pass passed, $fail failed (stopped: no booking)"; exit 1; fi
 echo "     booking $BOOKING at $START, will move to $NEW_START"
 
 # slot_start formatted like our API's times (UTC ISO with milliseconds), so they compare as text.

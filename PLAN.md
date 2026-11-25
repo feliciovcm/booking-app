@@ -320,11 +320,13 @@ npx supabase test db --remote --yes
    - Not covered end to end: reconciliation and the retry job (they need a lost response or a failing database); unit tests cover them, and `cron.job_run_details` shows the schedule running.
 
 ### Step 5 deploy runbook (in this order)
+**Deployed 2026-11-25:** migrations pushed (cron job owned by `postgres`), the four functions deployed (two retried after a Management API 502), pgTAP 37/37, smoke tests booking 19/19, mock 13/13, webhooks 14/14, and the cron's 08:10 UTC run got `202 STARTED`. Afterwards: 5 Boulevard events, all processed, no dead letters, no held bookings.
+
 1. **Database:** `npm run db:push` (three migrations: `record_webhook_attempt`, `bookings_vendor_updated_at`, `webhook_jobs_schedule`), then `npm run db:types`.
-2. **Vault** (SQL editor; make the secret with `openssl rand -hex 32`):
-   `select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');`
-   `select vault.create_secret('<secret>', 'webhook_jobs_secret');`
-3. **Function secrets:** `npx supabase secrets set WEBHOOK_JOBS_SECRET=<same secret> MOCK_WEBHOOK_URL=https://<project-ref>.supabase.co/functions/v1/boulevard-webhook`. `BOULEVARD_*` are already set for `booking`. `AUTOMATIONS_*` stay unset until step 5b.
+2. **Secrets, from one value so they can't differ** (lesson from the first deploy: a paste mismatch gave the cron 401s). In a terminal, from the project folder:
+   `S=$(openssl rand -hex 32) && printf %s "$S" | pbcopy && npx supabase secrets set WEBHOOK_JOBS_SECRET="$S"; unset S`
+   Then in the SQL editor, pasting over the whole `<paste>`: `select vault.create_secret('<paste>', 'webhook_jobs_secret');` (or `vault.update_secret((select id from vault.secrets where name = 'webhook_jobs_secret'), '<paste>')` to replace it), plus `select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');`. Clear the clipboard after.
+3. **Mock webhook target:** `npx supabase secrets set MOCK_WEBHOOK_URL=https://<project-ref>.supabase.co/functions/v1/boulevard-webhook`. `BOULEVARD_*` are already set for `booking`. `AUTOMATIONS_*` stay unset until step 5b.
 4. **Functions:** `npx supabase functions deploy booking`, then `mock-boulevard`, `boulevard-webhook`, `webhook-jobs` (`verify_jwt = false` comes from `config.toml`).
 5. **Checks:** `npm run db:test` (both pgTAP files), then `bash scripts/smoke-booking.sh`, `bash scripts/smoke-mock-boulevard.sh` and `bash scripts/smoke-webhooks.sh`.
 6. **After 5 minutes,** confirm the schedule runs: `select status, return_message, start_time from cron.job_run_details order by start_time desc limit 5;` and `select status_code, timed_out, error_msg, created from net._http_response order by created desc limit 5;` (expect `succeeded` and `202`), and the function logs show "jobs finished".
