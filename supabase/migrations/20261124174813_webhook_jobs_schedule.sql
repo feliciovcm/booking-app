@@ -23,6 +23,10 @@ alter table public.bookings add column provider_session_id text;
 -- Reconciliation looks for old held bookings. Partial: held rows are few and short-lived.
 create index bookings_held_created_at_idx on public.bookings (created_at) where status = 'held';
 
+-- pg_cron runs a job as the role that scheduled it. Against a hosted project the CLI may
+-- connect as a temporary login role, so schedule as postgres (the login role is a member).
+set role postgres;
+
 -- The function replies 202 before working, so a short timeout is enough.
 select cron.schedule(
   'webhook-jobs',
@@ -39,3 +43,5 @@ select cron.schedule(
   );
   $$
 );
+
+reset role;

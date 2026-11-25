@@ -313,7 +313,21 @@ npx supabase test db --remote --yes
    - `booking.rescheduled` and `booking.cancelled` from webhook processing, only when it changed a row (not for "unchanged", "stale", "not ours" or redeliveries); `describe(id)` reads the slugs and current start
    - `alert.dead_letters` (real failures only) and `alert.webhooks_silent` from `webhook-jobs`; they repeat every run while the problem lasts, and the workflow decides how often to notify
    - **Trade-off:** an automation can miss an event (n8n down, tunnel closed), and event retries can't resend it because re-processing changes nothing. Production answer: an outbox table written with the change, delivered and retried by a job.
-7. **Checks:** unit and contract tests, a smoke script that runs checkout, then the webhook, then the row being `confirmed`, plus pgTAP for any new grants.
+7. **Done: checks.** Unit and contract tests cover every piece (206 Vitest tests). New for deploy:
+   - **`supabase/tests/webhooks.test.sql`** (pgTAP, 14 checks, runs with `npm run db:test`): the new columns and index; `record_webhook_attempt` refused for `anon` and `authenticated`, counting failed and successful tries for `service_role`, with an empty `search_path`; `pg_cron` and `pg_net` enabled; the `webhook-jobs` job every 5 minutes, owned by `postgres`, reading its secret from Vault; and both Vault secrets present (fails until deploy step 2).
+   - **`scripts/smoke-webhooks.sh`**: books through `booking`, waits for the CREATED webhook to be recorded and processed once, has "staff" reschedule then cancel in the mock and checks the booking follows (new `slot_start`, `vendor_updated_at` set, then `cancelled`), and checks an unsigned delivery and a call without the cron secret get 401. Rows are read with `supabase db query --remote --read-only` (no prompt). Queries were dry-run against the hosted database before deploy.
+   - **Fix found while writing the runbook:** pg_cron runs a job as the role that scheduled it, and the CLI may connect as a temporary login role, so the migration schedules under `set role postgres` and pgTAP asserts the owner.
+   - Not covered end to end: reconciliation and the retry job (they need a lost response or a failing database); unit tests cover them, and `cron.job_run_details` shows the schedule running.
+
+### Step 5 deploy runbook (in this order)
+1. **Database:** `npm run db:push` (three migrations: `record_webhook_attempt`, `bookings_vendor_updated_at`, `webhook_jobs_schedule`), then `npm run db:types`.
+2. **Vault** (SQL editor; make the secret with `openssl rand -hex 32`):
+   `select vault.create_secret('https://<project-ref>.supabase.co', 'project_url');`
+   `select vault.create_secret('<secret>', 'webhook_jobs_secret');`
+3. **Function secrets:** `npx supabase secrets set WEBHOOK_JOBS_SECRET=<same secret> MOCK_WEBHOOK_URL=https://<project-ref>.supabase.co/functions/v1/boulevard-webhook`. `BOULEVARD_*` are already set for `booking`. `AUTOMATIONS_*` stay unset until step 5b.
+4. **Functions:** `npx supabase functions deploy booking`, then `mock-boulevard`, `boulevard-webhook`, `webhook-jobs` (`verify_jwt = false` comes from `config.toml`).
+5. **Checks:** `npm run db:test` (both pgTAP files), then `bash scripts/smoke-booking.sh`, `bash scripts/smoke-mock-boulevard.sh` and `bash scripts/smoke-webhooks.sh`.
+6. **After 5 minutes,** confirm the schedule runs: `select status, return_message, start_time from cron.job_run_details order by start_time desc limit 5;` and `select status_code, timed_out, error_msg, created from net._http_response order by created desc limit 5;` (expect `succeeded` and `202`), and the function logs show "jobs finished".
 
 ## Next: step 5b (n8n, self-hosted)
 

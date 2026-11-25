@@ -48,6 +48,7 @@ export type Database = {
           location_id: string
           provider: string
           provider_booking_id: string | null
+          provider_session_id: string | null
           slot_start: string
           status: string
           treatment_id: string
@@ -63,6 +64,7 @@ export type Database = {
           location_id: string
           provider: string
           provider_booking_id?: string | null
+          provider_session_id?: string | null
           slot_start: string
           status?: string
           treatment_id: string
@@ -78,6 +80,7 @@ export type Database = {
           location_id?: string
           provider?: string
           provider_booking_id?: string | null
+          provider_session_id?: string | null
           slot_start?: string
           status?: string
           treatment_id?: string
