@@ -1,6 +1,7 @@
 // Deno entry for the scheduled webhook jobs. pg_cron calls it; see handler.ts.
 
 import { createClient } from "@supabase/supabase-js";
+import { createAutomations } from "../_shared/automations.ts";
 import { parseBoulevardEvent } from "../_shared/boulevard-events.ts";
 import { createBoulevard } from "../_shared/boulevard.ts";
 import { applyAppointmentChange } from "../boulevard-webhook/process.ts";
@@ -18,6 +19,9 @@ const secretKey = (JSON.parse(env("SUPABASE_SECRET_KEYS")) as Record<string, str
 const admin = createClient(env("SUPABASE_URL"), secretKey, { auth: { persistSession: false } });
 const bookings = createAppointmentBookings(admin);
 
+// Optional: where booking changes and alerts go (n8n, step 5b). Unset: nothing is sent.
+const automations = createAutomations({ url: Deno.env.get("AUTOMATIONS_WEBHOOK_URL"), secret: Deno.env.get("AUTOMATIONS_SECRET") });
+
 const boulevardConfig = {
   baseUrl: env("BOULEVARD_BASE_URL"),
   clientId: env("BOULEVARD_CLIENT_ID"),
@@ -33,11 +37,12 @@ export default {
     events: createWebhookEvents(admin),
     // Same processing as the receiver.
     process: async (event, log) => {
-      await applyAppointmentChange(bookings, event.provider, parseBoulevardEvent(event.payload), log);
+      await applyAppointmentChange(bookings, event.provider, parseBoulevardEvent(event.payload), log, automations.send);
     },
     providers: {
       boulevard: (log) => createBoulevard(boulevardConfig, log),
     },
+    forward: automations.send,
     defer: (work) => EdgeRuntime.waitUntil(work),
   }),
 };

@@ -2,6 +2,7 @@
 // The scheduled jobs in memory: retrying events, reconciling stuck held bookings, and the
 // silence check. pg_cron calls this every 5 minutes in production.
 import { describe, expect, it } from "vitest";
+import type { AutomationEvent } from "../_shared/automations.ts";
 import type { InboundEvent } from "../boulevard-webhook/handler.ts";
 import { UNKNOWN_APPOINTMENT } from "../boulevard-webhook/process.ts";
 import { createHandler, MAX_ATTEMPTS, type Deps, type HeldBooking, type JobsStore } from "./handler.ts";
@@ -48,6 +49,9 @@ const heldBooking = (id: string, extra: Partial<BookingRow> = {}): BookingRow =>
   id,
   provider: "boulevard",
   providerSessionId: `cart-${id}`,
+  location: "noho",
+  treatment: "prp",
+  start: "2026-11-25T15:00:00.000Z",
   status: "held",
   createdAt: minutesAgo(60),
   providerBookingId: null,
@@ -60,6 +64,7 @@ function setup({ events = [] as EventRow[], bookings = [] as BookingRow[], overr
   const logs: Record<string, unknown>[] = [];
   const line = (l: string) => logs.push(JSON.parse(l));
   const statusCalls: string[] = [];
+  const forwarded: AutomationEvent[] = [];
   const handler = createHandler({
     cronSecret: SECRET,
     store: memoryStore(events, bookings),
@@ -84,6 +89,7 @@ function setup({ events = [] as EventRow[], bookings = [] as BookingRow[], overr
       }),
     },
     defer: (work) => deferred.push(work),
+    forward: (e) => void forwarded.push(e),
     now: () => NOW,
     sink: { log: line, warn: line, error: line },
     ...overrides,
@@ -93,7 +99,7 @@ function setup({ events = [] as EventRow[], bookings = [] as BookingRow[], overr
     await Promise.all(deferred);
     return res;
   };
-  return { run, events, bookings, processed, logs, statusCalls };
+  return { run, events, bookings, processed, logs, statusCalls, forwarded };
 }
 
 describe("webhook-jobs", () => {
@@ -123,7 +129,7 @@ describe("webhook-jobs", () => {
     });
 
     it("reports dead letters, but only as an error when they aren't the expected kind", async () => {
-      const { run, logs } = setup({
+      const { run, logs, forwarded } = setup({
         events: [
           event("phone-booking", { attempts: MAX_ATTEMPTS, lastError: UNKNOWN_APPOINTMENT }),
           event("broken", { attempts: MAX_ATTEMPTS, lastError: "unexpected APPOINTMENT_CREATED payload (data.node.startAt)" }),
@@ -131,12 +137,13 @@ describe("webhook-jobs", () => {
       });
       await run();
       expect(logs).toContainEqual(expect.objectContaining({ level: "error", msg: "webhook dead letters", failed: 1, waitingForCreated: 1 }));
+      expect(forwarded).toEqual([{ type: "alert.dead_letters", failed: 1, waitingForCreated: 1 }]);
     });
   });
 
   describe("reconcile", () => {
     it("confirms a stuck held booking the vendor did book, and expires one it didn't", async () => {
-      const { run, bookings, statusCalls } = setup({
+      const { run, bookings, statusCalls, forwarded } = setup({
         bookings: [heldBooking("booked"), heldBooking("abandoned"), heldBooking("recent", { createdAt: minutesAgo(10) })],
         booked: { "cart-booked": "urn:blvd:Appointment:a1" },
       });
@@ -147,6 +154,9 @@ describe("webhook-jobs", () => {
         ["abandoned", "expired", null],
         ["recent", "held", null],
       ]);
+      // Only the confirmation is news; an abandoned hold was never a booking. (The silence
+      // check also fires here, fairly: a booking confirmed with no webhook is what it watches.)
+      expect(forwarded.filter((e) => e.type.startsWith("booking."))).toEqual([{ type: "booking.confirmed", bookingId: "booked", location: "noho", treatment: "prp", start: "2026-11-25T15:00:00.000Z" }]);
     });
 
     it("keeps going when the vendor fails for one booking, leaving it held for the next run", async () => {
@@ -158,9 +168,10 @@ describe("webhook-jobs", () => {
 
   describe("silence check", () => {
     it("alerts when bookings were confirmed but no webhook arrived", async () => {
-      const { run, logs } = setup({ bookings: [heldBooking("b1", { status: "confirmed", createdAt: minutesAgo(30) })] });
+      const { run, logs, forwarded } = setup({ bookings: [heldBooking("b1", { status: "confirmed", createdAt: minutesAgo(30) })] });
       await run();
       expect(logs).toContainEqual(expect.objectContaining({ level: "error", msg: "no webhooks for recent bookings", confirmedBookings: 1 }));
+      expect(forwarded).toEqual([{ type: "alert.webhooks_silent", confirmedBookings: 1 }]);
     });
 
     it("stays quiet when webhooks are arriving, or when nobody booked", async () => {
@@ -172,6 +183,7 @@ describe("webhook-jobs", () => {
       const idle = setup();
       await idle.run();
       for (const logs of [busy.logs, idle.logs]) expect(logs.some((l) => l.msg === "no webhooks for recent bookings")).toBe(false);
+      expect([...busy.forwarded, ...idle.forwarded]).toEqual([]);
     });
   });
 

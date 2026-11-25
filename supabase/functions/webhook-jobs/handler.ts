@@ -6,10 +6,14 @@
 // 2. Reconcile: a held booking older than any vendor hold either got booked (its checkout
 //               response and webhook were both lost) or never will. Ask the vendor once.
 // 3. Silence:   bookings were confirmed but no webhook arrived, so Boulevard may have
-//               disabled the subscription. Alerts are log lines for now (n8n in step 5b).
+//               disabled the subscription.
+//
+// Alerts are log lines, and also go to automations (n8n) when configured. They repeat every
+// run while the problem lasts; the workflow decides how often to notify someone.
 //
 // It replies 202 before working: pg_net gives up on a response after a few seconds.
 
+import type { AutomationEvent } from "../_shared/automations.ts";
 import type { BookingProvider } from "../_shared/booking-provider.ts";
 import { constantTimeEqual } from "../_shared/boulevard-signature.ts";
 import { createLogger, requestIdFrom, type Log, type Sink } from "../_shared/log.ts";
@@ -26,7 +30,8 @@ const SILENCE_WINDOW_MS = 60 * 60_000;
 const SILENCE_GRACE_MS = 10 * 60_000;
 const BATCH = 50;
 
-export type HeldBooking = { id: string; provider: string; providerSessionId: string | null };
+/** A held booking, with what automations are told if it turns out confirmed (slugs, UTC start). */
+export type HeldBooking = { id: string; provider: string; providerSessionId: string | null; location: string; treatment: string; start: string };
 
 /** The queries these jobs need, behind an interface so tests use memory and index.ts uses Postgres. */
 export type JobsStore = {
@@ -51,6 +56,8 @@ export type Deps = {
   /** Provider name (as stored on bookings) -> a client, for reconciliation. */
   providers: Record<string, (log: Log) => Pick<BookingProvider, "checkoutStatus">>;
   defer: (work: Promise<unknown>) => void;
+  /** Sends alerts to automations (n8n). Never throws (see _shared/automations.ts). */
+  forward?: (event: AutomationEvent, log: Log) => void | Promise<void>;
   now?: () => number;
   sink?: Sink;
 };
@@ -92,8 +99,10 @@ async function runJobs(deps: Deps, log: Log): Promise<void> {
     }
     const dead = await deps.store.deadLetters(MAX_ATTEMPTS);
     // Bookings made outside the funnel end here by design (their CREATED is "not ours").
-    if (dead.failed > 0) log.error("webhook dead letters", dead);
-    else if (dead.waitingForCreated > 0) log.info("webhook dead letters", dead);
+    if (dead.failed > 0) {
+      log.error("webhook dead letters", dead);
+      await deps.forward?.({ type: "alert.dead_letters", ...dead }, log);
+    } else if (dead.waitingForCreated > 0) log.info("webhook dead letters", dead);
   });
 
   await guarded("reconcile", async () => {
@@ -105,6 +114,8 @@ async function runJobs(deps: Deps, log: Log): Promise<void> {
         if (confirmationId) {
           await deps.store.confirmHeld(booking.id, confirmationId);
           summary.confirmed++;
+          const { id: bookingId, location, treatment, start } = booking;
+          await deps.forward?.({ type: "booking.confirmed", bookingId, location, treatment, start }, log);
         } else {
           await deps.store.expireHeld(booking.id);
           summary.expired++;
@@ -118,7 +129,10 @@ async function runJobs(deps: Deps, log: Log): Promise<void> {
 
   await guarded("silence", async () => {
     const { confirmed, webhooks } = await deps.store.activity(ago(SILENCE_WINDOW_MS), ago(SILENCE_GRACE_MS));
-    if (confirmed > 0 && webhooks === 0) log.error("no webhooks for recent bookings", { confirmedBookings: confirmed });
+    if (confirmed > 0 && webhooks === 0) {
+      log.error("no webhooks for recent bookings", { confirmedBookings: confirmed });
+      await deps.forward?.({ type: "alert.webhooks_silent", confirmedBookings: confirmed }, log);
+    }
   });
 
   log.info("jobs finished", summary);

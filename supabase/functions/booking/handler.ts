@@ -17,6 +17,7 @@
 // safe to show the visitor.
 
 import { z } from "zod";
+import type { AutomationEvent } from "../_shared/automations.ts";
 import { BookingError, type BookingErrorCode, type BookingProvider } from "../_shared/booking-provider.ts";
 import { createLogger, requestIdFrom, type Log, type Sink } from "../_shared/log.ts";
 
@@ -57,6 +58,8 @@ export type Deps = {
   /** Provider name (as stored in the mapping tables) -> a client for this request. */
   providers: Record<string, (log: Log) => BookingProvider>;
   bookings: BookingsRepo;
+  /** Tells automations (n8n) about a booking change. Must not block or throw: index.ts sends in the background. */
+  forward?: (event: AutomationEvent, log: Log) => void;
   sink?: Sink;
 };
 
@@ -224,6 +227,7 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
           try {
             const { confirmationId } = await s.provider.checkout(s.id, body.client, body.cardToken);
             await deps.bookings.confirm(row.id, confirmationId);
+            deps.forward?.({ type: "booking.confirmed", bookingId: row.id, location: body.location, treatment: body.service, start: row.slotStart }, log);
             return reply(200, { bookingId: row.id, start: row.slotStart });
           } catch (error) {
             // A definite "no": this attempt is over. Anything else (vendor down, a timeout) may

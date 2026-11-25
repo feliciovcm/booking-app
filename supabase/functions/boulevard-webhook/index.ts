@@ -2,6 +2,7 @@
 // EdgeRuntime.waitUntil, which keeps processing running after the 200 goes back.
 
 import { createClient } from "@supabase/supabase-js";
+import { createAutomations } from "../_shared/automations.ts";
 import { parseBoulevardEvent } from "../_shared/boulevard-events.ts";
 import { createHandler } from "./handler.ts";
 import { applyAppointmentChange } from "./process.ts";
@@ -19,13 +20,16 @@ const secretKey = (JSON.parse(env("SUPABASE_SECRET_KEYS")) as Record<string, str
 const admin = createClient(env("SUPABASE_URL"), secretKey, { auth: { persistSession: false } });
 const bookings = createAppointmentBookings(admin);
 
+// Optional: where booking changes and alerts go (n8n, step 5b). Unset: nothing is sent.
+const automations = createAutomations({ url: Deno.env.get("AUTOMATIONS_WEBHOOK_URL"), secret: Deno.env.get("AUTOMATIONS_SECRET") });
+
 export default {
   fetch: createHandler({
     secretBase64: env("BOULEVARD_CLIENT_SECRET"),
     events: createWebhookEvents(admin),
     // Boulevard's payload -> our AppointmentChange -> bookings. Throwing leaves the event unprocessed.
     process: async (event, log) => {
-      await applyAppointmentChange(bookings, event.provider, parseBoulevardEvent(event.payload), log);
+      await applyAppointmentChange(bookings, event.provider, parseBoulevardEvent(event.payload), log, automations.send);
     },
     defer: (work) => EdgeRuntime.waitUntil(work),
   }),

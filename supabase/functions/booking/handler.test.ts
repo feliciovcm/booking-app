@@ -4,6 +4,7 @@
 // A second, made-up vendor proves the handler doesn't depend on Boulevard.
 // Step 4 adds checkout: the bookings table is faked in memory (the real one is in index.ts).
 import { beforeEach, describe, expect, it } from "vitest";
+import type { AutomationEvent } from "../_shared/automations.ts";
 import { BookingError, type BookingProvider } from "../_shared/booking-provider.ts";
 import { clearTokenCache, createBoulevard } from "../_shared/boulevard.ts";
 import { createHandler as createMock } from "../mock-boulevard/handler.ts";
@@ -68,6 +69,7 @@ let clock: { now: number };
 let bookings: ReturnType<typeof memoryBookings>;
 let mock: ReturnType<typeof createMock>;
 let deps: Deps;
+let forwarded: AutomationEvent[];
 
 beforeEach(() => {
   clearTokenCache();
@@ -78,6 +80,7 @@ beforeEach(() => {
   lines = [];
   clock = { now: Date.parse("2026-11-24T12:00:00Z") };
   bookings = memoryBookings();
+  forwarded = [];
   mock = createMock({
     clientId: "app",
     clientSecret: "c2VjcmV0",
@@ -114,6 +117,7 @@ beforeEach(() => {
         ),
       acme: () => acme,
     },
+    forward: (event) => forwarded.push(event),
     sink: { log: push, warn: push, error: push },
   };
 });
@@ -298,6 +302,8 @@ describe("checkout", () => {
         providerSessionId: sessionId.slice("boulevard|".length),
       },
     ]);
+    // Our slugs and ids only: automations never see client data or vendor ids.
+    expect(forwarded).toEqual([{ type: "booking.confirmed", bookingId: "b1", location: "noho", treatment: "prp", start: hold.start }]);
   });
 
   it("returns the same booking when retried with the same key, without calling the vendor again", async () => {
@@ -310,6 +316,7 @@ describe("checkout", () => {
     expect(again).toEqual(expect.objectContaining({ status: 200, body: first.body }));
     expect(operations.filter((o) => o === "CheckoutCart")).toHaveLength(checkouts);
     expect(bookings.rows).toHaveLength(1);
+    expect(forwarded).toHaveLength(1); // the retry answers from our table and announces nothing new
   });
 
   it("keeps the row held when the vendor is down, and the retry with the same key completes it", async () => {
@@ -337,6 +344,7 @@ describe("checkout", () => {
     const res = await call(await checkoutBody(sessionId, { location: "atlanta" }));
     expect(res).toMatchObject({ status: 409, body: { error: { code: "SLOT_UNAVAILABLE" } } });
     expect(bookings.rows).toMatchObject([{ status: "expired", providerBookingId: null }]);
+    expect(forwarded).toEqual([]);
   });
 
   it("checks the browser's location against the vendor's cart", async () => {

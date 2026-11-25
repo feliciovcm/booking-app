@@ -3,6 +3,7 @@
 // and point mapping rows at its name. The handler doesn't change.
 
 import { createClient } from "@supabase/supabase-js";
+import { createAutomations } from "../_shared/automations.ts";
 import { createBoulevard } from "../_shared/boulevard.ts";
 import { createHandler, type BookingRow, type BookingsRepo, type Mapping } from "./handler.ts";
 
@@ -18,6 +19,9 @@ const secretKey = (JSON.parse(env("SUPABASE_SECRET_KEYS")) as Record<string, str
 // Secret key = service_role: bypasses RLS. Used for the mapping tables (read) and the
 // bookings table (write). Every value written is validated by the handler first.
 const admin = createClient(env("SUPABASE_URL"), secretKey, { auth: { persistSession: false } });
+
+// Optional: where booking changes and alerts go (n8n, step 5b). Unset: nothing is sent.
+const automations = createAutomations({ url: Deno.env.get("AUTOMATIONS_WEBHOOK_URL"), secret: Deno.env.get("AUTOMATIONS_SECRET") });
 
 const boulevardConfig = {
   baseUrl: env("BOULEVARD_BASE_URL"),
@@ -128,6 +132,8 @@ export default {
     allowedOrigins: env("BOOKING_ALLOWED_ORIGINS").split(",").map((o) => o.trim()),
     resolve,
     bookings,
+    // In the background: checkout never waits on n8n.
+    forward: (event, log) => EdgeRuntime.waitUntil(automations.send(event, log)),
     // Keys match `provider` in the mapping tables.
     providers: {
       boulevard: (log) => createBoulevard(boulevardConfig, log),

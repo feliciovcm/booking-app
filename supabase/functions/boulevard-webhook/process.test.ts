@@ -1,6 +1,7 @@
 // @vitest-environment node
 // What an appointment change does to our bookings table, vendor-neutral and in memory.
 import { describe, expect, it } from "vitest";
+import type { AutomationEvent } from "../_shared/automations.ts";
 import type { AppointmentChange } from "../_shared/booking-provider.ts";
 import { createLogger } from "../_shared/log.ts";
 import { applyAppointmentChange, type AppointmentBookings, type BookingRef } from "./process.ts";
@@ -18,6 +19,7 @@ function memoryBookings(rows: Row[]) {
     confirm: async (id, vendorId, occurredAt) => void Object.assign(byId(id), { status: "confirmed", providerBookingId: vendorId, vendorUpdatedAt: occurredAt }),
     reschedule: async (id, start, occurredAt) => void Object.assign(byId(id), { slotStart: start, vendorUpdatedAt: occurredAt }),
     cancel: async (id, occurredAt) => void Object.assign(byId(id), { status: "cancelled", vendorUpdatedAt: occurredAt }),
+    describe: async (id) => ({ location: "noho", treatment: "prp", start: byId(id).slotStart }),
   };
   return repo;
 }
@@ -45,7 +47,8 @@ const change = (kind: AppointmentChange["kind"], extra: Partial<AppointmentChang
 });
 
 const log = createLogger("test", "r1", { log() {}, warn() {}, error() {} });
-const apply = (rows: Row[], c: AppointmentChange | null) => applyAppointmentChange(memoryBookings(rows), "boulevard", c, log);
+const apply = (rows: Row[], c: AppointmentChange | null, forwarded?: AutomationEvent[]) =>
+  applyAppointmentChange(memoryBookings(rows), "boulevard", c, log, forwarded && ((e) => void forwarded.push(e)));
 
 describe("applyAppointmentChange", () => {
   describe("created", () => {
@@ -121,6 +124,36 @@ describe("applyAppointmentChange", () => {
     // Either its CREATED hasn't been processed yet (out of order) or it was booked outside the funnel.
     await expect(apply([], change("rescheduled"))).rejects.toThrow("unknown appointment");
     await expect(apply([held()], change("cancelled"))).rejects.toThrow("unknown appointment");
+  });
+
+  describe("forwarding to automations", () => {
+    it("forwards each change it made, with our slugs and the booking's current start", async () => {
+      const forwarded: AutomationEvent[] = [];
+      await apply([held()], change("created"), forwarded);
+      await apply([confirmed()], change("rescheduled", { start: "2026-11-26T15:00:00.000Z" }), forwarded);
+      await apply([confirmed()], change("cancelled"), forwarded);
+      expect(forwarded).toEqual([
+        { type: "booking.confirmed", bookingId: "b1", location: "noho", treatment: "prp", start: "2026-11-25T15:00:00.000Z" },
+        { type: "booking.rescheduled", bookingId: "b1", location: "noho", treatment: "prp", start: "2026-11-26T15:00:00.000Z" },
+        { type: "booking.cancelled", bookingId: "b1", location: "noho", treatment: "prp", start: "2026-11-25T15:00:00.000Z" },
+      ]);
+    });
+
+    it("forwards nothing when nothing changed, so a redelivery or a phone booking isn't announced", async () => {
+      const forwarded: AutomationEvent[] = [];
+      await apply([confirmed()], change("created"), forwarded); // checkout already announced it
+      await apply([], change("created", { vendorAppointmentId: "appt-phone" }), forwarded);
+      await apply([{ ...confirmed(), vendorUpdatedAt: "2026-11-24T13:00:00.000Z" }], change("rescheduled"), forwarded);
+      await apply([{ ...confirmed(), status: "cancelled" as const }], change("cancelled"), forwarded);
+      expect(forwarded).toEqual([]);
+    });
+
+    it("still succeeds when forwarding fails", async () => {
+      const rows = [confirmed()];
+      const outcome = applyAppointmentChange(memoryBookings(rows), "boulevard", change("cancelled"), log, () => Promise.reject(new Error("n8n down")));
+      await expect(outcome).resolves.toBe("cancelled");
+      expect(rows[0].status).toBe("cancelled");
+    });
   });
 
   it("does nothing for event types the parser doesn't act on", async () => {

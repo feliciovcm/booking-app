@@ -6,7 +6,7 @@ import { UNKNOWN_APPOINTMENT } from "../boulevard-webhook/process.ts";
 import type { JobsStore } from "./handler.ts";
 
 type EventRecord = { provider: string; event_id: string; type: string; payload: unknown };
-type HeldRecord = { id: string; provider: string; provider_session_id: string | null };
+type HeldRecord = { id: string; provider: string; provider_session_id: string | null; slot_start: string; locations: { slug: string }; treatments: { slug: string } };
 
 export const createJobsStore = (admin: SupabaseClient): JobsStore => {
   /** How many rows match, without fetching them. */
@@ -39,14 +39,21 @@ export const createJobsStore = (admin: SupabaseClient): JobsStore => {
     async staleHeld(before, limit) {
       const { data, error } = await admin
         .from("bookings")
-        .select("id, provider, provider_session_id")
+        .select("id, provider, provider_session_id, slot_start, locations(slug), treatments(slug)")
         .eq("status", "held")
         .not("provider_session_id", "is", null)
         .lt("created_at", before)
         .order("created_at")
         .limit(limit);
       if (error) throw error;
-      return (data as HeldRecord[]).map((r) => ({ id: r.id, provider: r.provider, providerSessionId: r.provider_session_id }));
+      return (data as unknown as HeldRecord[]).map((r) => ({
+        id: r.id,
+        provider: r.provider,
+        providerSessionId: r.provider_session_id,
+        location: r.locations.slug,
+        treatment: r.treatments.slug,
+        start: new Date(r.slot_start).toISOString(),
+      }));
     },
     async confirmHeld(id, confirmationId) {
       const { error } = await admin.from("bookings").update({ status: "confirmed", provider_booking_id: confirmationId }).eq("id", id).eq("status", "held");

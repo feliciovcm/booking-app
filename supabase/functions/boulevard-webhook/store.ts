@@ -98,4 +98,11 @@ export const createAppointmentBookings = (admin: SupabaseClient): AppointmentBoo
     const { error } = await admin.from("bookings").update({ status: "cancelled", vendor_updated_at: vendorUpdatedAt }).eq("id", id).neq("status", "cancelled");
     if (error) throw error;
   },
+  async describe(id) {
+    const { data, error } = await admin.from("bookings").select("slot_start, locations(slug), treatments(slug)").eq("id", id).maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    const row = data as unknown as { slot_start: string; locations: { slug: string }; treatments: { slug: string } };
+    return { location: row.locations.slug, treatment: row.treatments.slug, start: new Date(row.slot_start).toISOString() };
+  },
 });

@@ -10,6 +10,7 @@
 // processed yet. The retry job runs it again, and the cap dead-letters bookings made
 // outside our funnel.
 
+import type { AutomationEvent } from "../_shared/automations.ts";
 import type { AppointmentChange } from "../_shared/booking-provider.ts";
 import type { Log } from "../_shared/log.ts";
 
@@ -24,7 +25,14 @@ export type AppointmentBookings = {
   confirm(id: string, vendorAppointmentId: string, occurredAt: string): Promise<void>;
   reschedule(id: string, start: string, occurredAt: string): Promise<void>;
   cancel(id: string, vendorUpdatedAt: string): Promise<void>;
+  /** What automations are told about a booking: our slugs and its current start. */
+  describe(id: string): Promise<{ location: string; treatment: string; start: string } | null>;
 };
+
+/** Sends a booking change to automations (n8n). Never throws (see _shared/automations.ts). */
+export type Forward = (event: AutomationEvent, log: Log) => void | Promise<void>;
+
+const FORWARDED = { confirmed: "booking.confirmed", rescheduled: "booking.rescheduled", cancelled: "booking.cancelled" } as const;
 
 /** The error a reschedule or cancel throws for an appointment we have no row for. */
 export const UNKNOWN_APPOINTMENT = "unknown appointment, waiting for its CREATED";
@@ -39,43 +47,58 @@ export async function applyAppointmentChange(
   provider: string,
   change: AppointmentChange | null,
   log: Log,
+  forward?: Forward,
 ): Promise<Outcome> {
-  const outcome = await decide(bookings, provider, change);
+  const { outcome, bookingId } = await decide(bookings, provider, change);
   log.info("appointment change applied", { provider, kind: change?.kind, outcome });
+
+  // Only changes we actually made to a booking. A failed forward never fails processing:
+  // re-running it would change nothing, so the change itself is what we protect.
+  const type = bookingId && outcome in FORWARDED ? FORWARDED[outcome as keyof typeof FORWARDED] : null;
+  if (forward && type && bookingId) {
+    try {
+      const details = await bookings.describe(bookingId);
+      if (details) await forward({ type, bookingId, ...details }, log);
+    } catch (error) {
+      log.warn("automation not delivered", { type, errorName: error instanceof Error ? error.name : typeof error });
+    }
+  }
   return outcome;
 }
 
-async function decide(bookings: AppointmentBookings, provider: string, change: AppointmentChange | null): Promise<Outcome> {
-  if (!change) return "ignored";
+type Decision = { outcome: Outcome; bookingId?: string };
+
+async function decide(bookings: AppointmentBookings, provider: string, change: AppointmentChange | null): Promise<Decision> {
+  if (!change) return { outcome: "ignored" };
   const row = await bookings.findByVendorId(provider, change.vendorAppointmentId);
 
   switch (change.kind) {
     case "created": {
       if (row) {
         // Usually checkout confirmed it already. Never revive a cancelled or expired row.
-        if (row.status !== "held") return "unchanged";
+        if (row.status !== "held") return { outcome: "unchanged" };
         await bookings.confirm(row.id, change.vendorAppointmentId, change.occurredAt);
-        return "confirmed";
+        return { outcome: "confirmed", bookingId: row.id };
       }
       // No row has this vendor id: maybe our checkout booked it but never heard back.
       const lost = change.email ? await bookings.findHeld(provider, change.vendorLocationId, change.start, change.email) : null;
-      if (!lost) return "not ours"; // booked by phone or at the front desk
+      if (!lost) return { outcome: "not ours" }; // booked by phone or at the front desk
       await bookings.confirm(lost.id, change.vendorAppointmentId, change.occurredAt);
-      return "confirmed";
+      return { outcome: "confirmed", bookingId: lost.id };
     }
     case "rescheduled": {
       if (!row) throw new Error(UNKNOWN_APPOINTMENT);
-      if (row.status === "cancelled") return "unchanged";
-      if (isOlder(change.occurredAt, row.vendorUpdatedAt)) return "stale";
+      if (row.status === "cancelled") return { outcome: "unchanged" };
+      if (isOlder(change.occurredAt, row.vendorUpdatedAt)) return { outcome: "stale" };
       await bookings.reschedule(row.id, change.start, change.occurredAt);
-      return "rescheduled";
+      return { outcome: "rescheduled", bookingId: row.id };
     }
     case "cancelled": {
       if (!row) throw new Error(UNKNOWN_APPOINTMENT);
-      if (row.status === "cancelled") return "unchanged";
+      if (row.status === "cancelled") return { outcome: "unchanged" };
       // Cancelling is final, so even an older cancel applies; keep the newest event time.
       await bookings.cancel(row.id, latest(change.occurredAt, row.vendorUpdatedAt));
-      return "cancelled";
+      return { outcome: "cancelled", bookingId: row.id };
     }
   }
 }
