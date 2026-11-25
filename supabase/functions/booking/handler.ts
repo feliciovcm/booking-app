@@ -34,6 +34,8 @@ export type BookingRow = {
   slotStart: string;
   provider: string;
   providerBookingId: string | null;
+  /** The vendor's session (Boulevard: the cart), so reconciliation can ask how it ended. */
+  providerSessionId: string | null;
 };
 
 /** The bookings table, behind an interface so tests use memory and index.ts uses Postgres. */
@@ -213,6 +215,7 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
               locationId: mapping.locationId,
               slotStart: cart.hold.start, // from the vendor, never from the browser
               provider: mapping.provider,
+              providerSessionId: s.id,
             });
             fields.bookingId = row.id;
           }

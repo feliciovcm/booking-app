@@ -26,6 +26,9 @@ export type AppointmentBookings = {
   cancel(id: string, vendorUpdatedAt: string): Promise<void>;
 };
 
+/** The error a reschedule or cancel throws for an appointment we have no row for. */
+export const UNKNOWN_APPOINTMENT = "unknown appointment, waiting for its CREATED";
+
 export type Outcome = "ignored" | "not ours" | "unchanged" | "confirmed" | "rescheduled" | "stale" | "cancelled";
 
 const isOlder = (occurredAt: string, applied: string | null) => applied !== null && Date.parse(occurredAt) <= Date.parse(applied);
@@ -61,14 +64,14 @@ async function decide(bookings: AppointmentBookings, provider: string, change: A
       return "confirmed";
     }
     case "rescheduled": {
-      if (!row) throw new Error("unknown appointment, waiting for its CREATED");
+      if (!row) throw new Error(UNKNOWN_APPOINTMENT);
       if (row.status === "cancelled") return "unchanged";
       if (isOlder(change.occurredAt, row.vendorUpdatedAt)) return "stale";
       await bookings.reschedule(row.id, change.start, change.occurredAt);
       return "rescheduled";
     }
     case "cancelled": {
-      if (!row) throw new Error("unknown appointment, waiting for its CREATED");
+      if (!row) throw new Error(UNKNOWN_APPOINTMENT);
       if (row.status === "cancelled") return "unchanged";
       // Cancelling is final, so even an older cancel applies; keep the newest event time.
       await bookings.cancel(row.id, latest(change.occurredAt, row.vendorUpdatedAt));

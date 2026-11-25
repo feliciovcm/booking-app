@@ -23,6 +23,12 @@ export interface BookingProvider {
   summary(sessionId: string): Promise<{ vendorLocationId: string; vendorServiceId: string; hold: Hold | null }>;
   /** Books the held time. Safe to retry: a session that already checked out returns the same confirmation. */
   checkout(sessionId: string, client: Client, cardToken: string): Promise<{ confirmationId: string }>;
+  /**
+   * Did this session end up booked? For reconciliation; it never books anything new.
+   * confirmationId is the one checkout returned, or null if it never checked out (or the
+   * vendor no longer has the session).
+   */
+  checkoutStatus(sessionId: string): Promise<{ confirmationId: string | null }>;
 }
 
 /**

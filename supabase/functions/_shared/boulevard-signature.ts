@@ -64,7 +64,8 @@ export async function verifyBoulevardWebhook(input: {
 }
 
 // Compares without returning early, so response time doesn't leak how much matched.
-function constantTimeEqual(a: string, b: string): boolean {
+// Exported for other shared-secret checks (the cron secret in webhook-jobs).
+export function constantTimeEqual(a: string, b: string): boolean {
   let diff = a.length ^ b.length;
   for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
   return diff === 0;

@@ -428,3 +428,8 @@ verify_jwt = false
 # The function checks Boulevard's HMAC signature instead.
 [functions.boulevard-webhook]
 verify_jwt = false
+
+# Called by pg_cron through pg_net, which sends a shared secret (from Vault) instead of a
+# JWT. The function checks that secret itself.
+[functions.webhook-jobs]
+verify_jwt = false

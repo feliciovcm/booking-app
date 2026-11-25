@@ -58,7 +58,7 @@ async function resolve(locationSlug: string, serviceSlug: string): Promise<Mappi
 
 // The bookings table in the handler's names. Postgres returns timestamptz as
 // "2026-11-25 14:00:00+00" style text; normalize it so a retry answers byte for byte the same.
-const BOOKING_COLUMNS = "id, idempotency_key, status, email, treatment_id, location_id, slot_start, provider, provider_booking_id";
+const BOOKING_COLUMNS = "id, idempotency_key, status, email, treatment_id, location_id, slot_start, provider, provider_booking_id, provider_session_id";
 type BookingRecord = {
   id: string;
   idempotency_key: string;
@@ -69,6 +69,7 @@ type BookingRecord = {
   slot_start: string;
   provider: string;
   provider_booking_id: string | null;
+  provider_session_id: string | null;
 };
 const toRow = (r: BookingRecord): BookingRow => ({
   id: r.id,
@@ -80,6 +81,7 @@ const toRow = (r: BookingRecord): BookingRow => ({
   slotStart: new Date(r.slot_start).toISOString(),
   provider: r.provider,
   providerBookingId: r.provider_booking_id,
+  providerSessionId: r.provider_session_id,
 });
 
 const bookings: BookingsRepo = {
@@ -99,6 +101,7 @@ const bookings: BookingsRepo = {
         location_id: row.locationId,
         slot_start: row.slotStart,
         provider: row.provider,
+        provider_session_id: row.providerSessionId,
         status: "held",
       },
       { onConflict: "idempotency_key", ignoreDuplicates: true },

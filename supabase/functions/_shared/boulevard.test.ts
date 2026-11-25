@@ -195,6 +195,19 @@ describe("checkout", () => {
   });
 });
 
+describe("checkoutStatus", () => {
+  it("says not booked before checkout, and returns checkout's appointment id after", async () => {
+    const { b, sessionId } = await heldCart();
+    expect(await b.checkoutStatus(sessionId)).toEqual({ confirmationId: null });
+    const { confirmationId } = await b.checkout(sessionId, CLIENT, await cardToken());
+    expect(await b.checkoutStatus(sessionId)).toEqual({ confirmationId });
+  });
+
+  it("says not booked for a cart the vendor no longer has", async () => {
+    expect(await blvd().checkoutStatus("urn:blvd:Cart:gone")).toEqual({ confirmationId: null });
+  });
+});
+
 describe("retries", () => {
   it("retries a query after a 503, with backoff", async () => {
     const b = blvd();

@@ -34,6 +34,7 @@ const acme: BookingProvider = {
     if (acmeCheckoutError) throw acmeCheckoutError;
     return { confirmationId: "acme-conf-1" };
   },
+  checkoutStatus: async () => ({ confirmationId: null }),
 };
 let acmeCheckoutError: BookingError | null;
 
@@ -293,6 +294,8 @@ describe("checkout", () => {
         slotStart: hold.start, // from the vendor, not the browser
         provider: "boulevard",
         providerBookingId: expect.stringMatching(/^urn:blvd:Appointment:/),
+        // The vendor's own session id (our id minus its "boulevard|" prefix), for reconciliation.
+        providerSessionId: sessionId.slice("boulevard|".length),
       },
     ]);
   });
@@ -352,7 +355,7 @@ describe("checkout", () => {
     const sessionId = await start("atlanta");
     const res = await call(await checkoutBody(sessionId, { location: "atlanta" }));
     expect(res).toMatchObject({ status: 200, body: { bookingId: "b1", start: "2026-11-26T15:00:00.000Z" } });
-    expect(bookings.rows).toMatchObject([{ provider: "acme", providerBookingId: "acme-conf-1", locationId: "l-atl" }]);
+    expect(bookings.rows).toMatchObject([{ provider: "acme", providerBookingId: "acme-conf-1", providerSessionId: "acme-atl:acme-prp:s1", locationId: "l-atl" }]);
   });
 
   it.each([

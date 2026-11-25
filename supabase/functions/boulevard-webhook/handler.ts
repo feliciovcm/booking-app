@@ -106,7 +106,11 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
 }
 
 /** Runs one event and records the try. Never throws: the outcome lives on the row. */
-export async function processEvent(deps: Pick<Deps, "events" | "process">, event: InboundEvent, log: Log): Promise<void> {
+export async function processEvent(
+  deps: { events: Pick<WebhookEventsRepo, "recordAttempt">; process: Deps["process"] },
+  event: InboundEvent,
+  log: Log,
+): Promise<void> {
   const fields = { eventId: event.eventId, eventType: event.type };
   let error: string | null = null;
   try {

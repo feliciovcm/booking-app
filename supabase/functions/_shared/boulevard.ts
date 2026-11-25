@@ -152,6 +152,18 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
     }
   }
 
+  // Shared by checkout and checkoutStatus. On a completed cart, checkoutCart books nothing
+  // new: it returns the appointment that cart already made.
+  const CHECKOUT = `mutation CheckoutCart($id: ID!) { checkoutCart(input: { id: $id }) { appointments { appointmentId } } }`;
+  type Checkout = { checkoutCart: { appointments: { appointmentId: string }[] } };
+  const confirmation = (data: Checkout) => {
+    const [appointment] = data.checkoutCart.appointments;
+    if (!appointment) throw misconfigured("NO_APPOINTMENT"); // a checkout that booked nothing: Boulevard's side or our cart setup
+    return { confirmationId: appointment.appointmentId };
+  };
+  const completedAt = (cartId: string) =>
+    call<{ cart: { completedAt: string | null } | null }>("CartCompletedAt", `query CartCompletedAt($id: ID!) { cart(id: $id) { completedAt } }`, { id: cartId });
+
   return {
     async startSession(locationId, serviceId) {
       const created = await call<{ createCart: { cart: { id: string } } }>(
@@ -236,22 +248,10 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
     },
 
     async checkout(cartId, client, cardToken) {
-      const CHECKOUT = `mutation CheckoutCart($id: ID!) { checkoutCart(input: { id: $id }) { appointments { appointmentId } } }`;
-      type Checkout = { checkoutCart: { appointments: { appointmentId: string }[] } };
-      const confirmation = (data: Checkout) => {
-        const [appointment] = data.checkoutCart.appointments;
-        if (!appointment) throw misconfigured("NO_APPOINTMENT"); // a checkout that booked nothing: Boulevard's side or our cart setup
-        return { confirmationId: appointment.appointmentId };
-      };
-
       // 1. Already checked out? Then this is a retry after a lost response. A completed cart
       //    refuses every change (CART_COMPLETED), so skip straight to checkoutCart, which
       //    returns the same appointment again. (The mock does; confirm on Boulevard's sandbox.)
-      const state = await call<{ cart: { completedAt: string | null } | null }>(
-        "CartCompletedAt",
-        `query CartCompletedAt($id: ID!) { cart(id: $id) { completedAt } }`,
-        { id: cartId },
-      );
+      const state = await completedAt(cartId);
       if (!state.cart) throw new BookingError("SESSION_EXPIRED", "Your booking session expired. Please start again.", "CART_NOT_FOUND");
       if (state.cart.completedAt) return confirmation(await call<Checkout>("CheckoutCart", CHECKOUT, { id: cartId }));
 
@@ -280,6 +280,13 @@ export function createBoulevard(config: BoulevardConfig, log: Log): BookingProvi
       );
 
       // 4. Book it. A lapsed hold fails here with CART_MISSING_ITEM_TIME -> SESSION_EXPIRED.
+      return confirmation(await call<Checkout>("CheckoutCart", CHECKOUT, { id: cartId }));
+    },
+
+    async checkoutStatus(cartId) {
+      // Only a completed cart booked anything. Then checkoutCart hands back its appointment.
+      const state = await completedAt(cartId);
+      if (!state.cart?.completedAt) return { confirmationId: null };
       return confirmation(await call<Checkout>("CheckoutCart", CHECKOUT, { id: cartId }));
     },
   };
