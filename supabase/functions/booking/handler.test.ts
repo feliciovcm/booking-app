@@ -10,7 +10,7 @@ import { clearTokenCache, createBoulevard } from "../_shared/boulevard.ts";
 import { createHandler as createMock } from "../mock-boulevard/handler.ts";
 import { memoryStore } from "../mock-boulevard/memory-store.ts";
 import { SERVICES, VENDOR_LOCATIONS } from "../mock-boulevard/slots.ts";
-import { createHandler, type BookingRow, type BookingsRepo, type Deps, type Mapping } from "./handler.ts";
+import { createHandler, type AuthUser, type BookingRow, type BookingsRepo, type Deps, type Mapping } from "./handler.ts";
 
 const KEY = "sb_publishable_test";
 const ORIGIN = "http://localhost:5173";
@@ -57,6 +57,11 @@ function memoryBookings() {
     expire: async (id) => {
       Object.assign(rows.find((r) => r.id === id)!, { status: "expired" });
     },
+    claimByEmail: async (userId, email) => {
+      const unclaimed = rows.filter((r) => r.userId === null && r.email.toLowerCase() === email.toLowerCase());
+      for (const r of unclaimed) r.userId = userId;
+      return unclaimed.length;
+    },
   };
   return { rows, repo };
 }
@@ -70,6 +75,12 @@ let bookings: ReturnType<typeof memoryBookings>;
 let mock: ReturnType<typeof createMock>;
 let deps: Deps;
 let forwarded: AutomationEvent[];
+
+// Access tokens the fake Auth knows. The publishable key is not one of them: it means "guest".
+const USERS: Record<string, AuthUser> = {
+  "token-avery": { id: "u-avery", email: "Avery.Quinn@example.com", emailVerified: true },
+  "token-unverified": { id: "u-new", email: "new@example.com", emailVerified: false },
+};
 
 beforeEach(() => {
   clearTokenCache();
@@ -118,6 +129,7 @@ beforeEach(() => {
       acme: () => acme,
     },
     forward: (event) => forwarded.push(event),
+    users: { fromToken: async (token) => USERS[token] ?? null },
     sink: { log: push, warn: push, error: push },
   };
 });
@@ -300,6 +312,7 @@ describe("checkout", () => {
         providerBookingId: expect.stringMatching(/^urn:blvd:Appointment:/),
         // The vendor's own session id (our id minus its "boulevard|" prefix), for reconciliation.
         providerSessionId: sessionId.slice("boulevard|".length),
+        userId: null, // a guest: nobody was signed in
       },
     ]);
     // Our slugs and ids only: automations never see client data or vendor ids.
@@ -394,5 +407,70 @@ describe("checkout", () => {
     const logged = JSON.stringify(lines);
     for (const secret of [CLIENT.email, CLIENT.firstName, CLIENT.lastName, CLIENT.phone, body.cardToken as string]) expect(logged).not.toContain(secret);
     expect(lines.find((l) => l.msg === "booking request")).toMatchObject({ action: "checkout", status: 200, provider: "boulevard" });
+  });
+});
+
+describe("signed-in users", () => {
+  const as = (token: string) => ({ authorization: `Bearer ${token}` });
+
+  it("links a checkout to the signed-in user", async () => {
+    const { sessionId } = await held();
+    expect(await call(await checkoutBody(sessionId), as("token-avery"))).toMatchObject({ status: 200 });
+    expect(bookings.rows).toMatchObject([{ status: "confirmed", userId: "u-avery" }]);
+  });
+
+  it("treats the publishable key as a bearer token as a guest (that's what supabase-js sends signed out)", async () => {
+    const { sessionId } = await held();
+    expect(await call(await checkoutBody(sessionId), as(KEY))).toMatchObject({ status: 200 });
+    expect(bookings.rows).toMatchObject([{ userId: null }]);
+  });
+
+  it("refuses an invalid or expired token instead of booking as a guest", async () => {
+    const { sessionId } = await held();
+    const res = await call(await checkoutBody(sessionId), as("token-expired"));
+    expect(res).toMatchObject({ status: 401, body: { error: { code: "SIGN_IN_AGAIN" } } });
+    expect(bookings.rows).toEqual([]);
+  });
+
+  describe("claim", () => {
+    const guestRow = (id: string, email: string, userId: string | null = null): BookingRow => ({
+      id,
+      idempotencyKey: `key-${id}`,
+      status: "confirmed",
+      email,
+      treatmentId: "t-prp",
+      locationId: "l-noho",
+      slotStart: "2026-11-26T15:00:00.000Z",
+      provider: "boulevard",
+      providerBookingId: `appt-${id}`,
+      providerSessionId: `cart-${id}`,
+      userId,
+    });
+
+    it("links guest bookings made with the user's verified email, ignoring case", async () => {
+      bookings.rows.push(guestRow("g1", "avery.quinn@example.com"), guestRow("g2", "AVERY.QUINN@EXAMPLE.COM"), guestRow("g3", "someone@example.com"));
+      expect(await call({ action: "claim" }, as("token-avery"))).toMatchObject({ status: 200, body: { claimed: 2 } });
+      expect(bookings.rows.map((r) => [r.id, r.userId])).toEqual([
+        ["g1", "u-avery"],
+        ["g2", "u-avery"],
+        ["g3", null],
+      ]);
+    });
+
+    it("never takes a booking that already belongs to someone, and is safe to repeat", async () => {
+      bookings.rows.push(guestRow("owned", "avery.quinn@example.com", "u-other"));
+      expect(await call({ action: "claim" }, as("token-avery"))).toMatchObject({ body: { claimed: 0 } });
+      expect(bookings.rows[0].userId).toBe("u-other");
+      bookings.rows.push(guestRow("g1", "avery.quinn@example.com"));
+      await call({ action: "claim" }, as("token-avery"));
+      expect(await call({ action: "claim" }, as("token-avery"))).toMatchObject({ body: { claimed: 0 } });
+    });
+
+    it("needs a signed-in user with a verified email", async () => {
+      bookings.rows.push(guestRow("g1", "new@example.com"));
+      expect(await call({ action: "claim" })).toMatchObject({ status: 401, body: { error: { code: "SIGN_IN_REQUIRED" } } });
+      expect(await call({ action: "claim" }, as("token-unverified"))).toMatchObject({ status: 403, body: { error: { code: "EMAIL_NOT_VERIFIED" } } });
+      expect(bookings.rows[0].userId).toBeNull();
+    });
   });
 });

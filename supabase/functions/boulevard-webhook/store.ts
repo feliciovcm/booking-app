@@ -3,6 +3,7 @@
 // Pass a client built with the secret key (service_role): both tables are server only.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { likeLiteral } from "../_shared/sql.ts";
 import type { WebhookEventsRepo } from "./handler.ts";
 import type { AppointmentBookings, BookingRef } from "./process.ts";
 
@@ -40,8 +41,6 @@ const toRef = (r: RefRecord): BookingRef => ({
   status: r.status,
   vendorUpdatedAt: r.vendor_updated_at ? new Date(r.vendor_updated_at).toISOString() : null,
 });
-// ilike treats % and _ as wildcards, and "_" is common in emails: escape them.
-const likeLiteral = (text: string) => text.replace(/[\\%_]/g, "\\$&");
 
 export const createAppointmentBookings = (admin: SupabaseClient): AppointmentBookings => ({
   async findByVendorId(provider, vendorAppointmentId) {

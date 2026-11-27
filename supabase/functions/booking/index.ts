@@ -5,7 +5,8 @@
 import { createClient } from "@supabase/supabase-js";
 import { createAutomations } from "../_shared/automations.ts";
 import { createBoulevard } from "../_shared/boulevard.ts";
-import { createHandler, type BookingRow, type BookingsRepo, type Mapping } from "./handler.ts";
+import { likeLiteral } from "../_shared/sql.ts";
+import { createHandler, type AuthUser, type BookingRow, type BookingsRepo, type Mapping } from "./handler.ts";
 
 const env = (name: string) => {
   const value = Deno.env.get(name);
@@ -62,7 +63,7 @@ async function resolve(locationSlug: string, serviceSlug: string): Promise<Mappi
 
 // The bookings table in the handler's names. Postgres returns timestamptz as
 // "2026-11-25 14:00:00+00" style text; normalize it so a retry answers byte for byte the same.
-const BOOKING_COLUMNS = "id, idempotency_key, status, email, treatment_id, location_id, slot_start, provider, provider_booking_id, provider_session_id";
+const BOOKING_COLUMNS = "id, idempotency_key, status, email, treatment_id, location_id, slot_start, provider, provider_booking_id, provider_session_id, user_id";
 type BookingRecord = {
   id: string;
   idempotency_key: string;
@@ -74,6 +75,7 @@ type BookingRecord = {
   provider: string;
   provider_booking_id: string | null;
   provider_session_id: string | null;
+  user_id: string | null;
 };
 const toRow = (r: BookingRecord): BookingRow => ({
   id: r.id,
@@ -86,6 +88,7 @@ const toRow = (r: BookingRecord): BookingRow => ({
   provider: r.provider,
   providerBookingId: r.provider_booking_id,
   providerSessionId: r.provider_session_id,
+  userId: r.user_id,
 });
 
 const bookings: BookingsRepo = {
@@ -106,6 +109,7 @@ const bookings: BookingsRepo = {
         slot_start: row.slotStart,
         provider: row.provider,
         provider_session_id: row.providerSessionId,
+        user_id: row.userId,
         status: "held",
       },
       { onConflict: "idempotency_key", ignoreDuplicates: true },
@@ -124,7 +128,26 @@ const bookings: BookingsRepo = {
     const { error } = await admin.from("bookings").update({ status: "expired" }).eq("id", id).eq("status", "held");
     if (error) throw error;
   },
+  async claimByEmail(userId, email) {
+    // Only unowned rows (user_id is null), so a claim never moves someone else's booking.
+    const { data, error } = await admin
+      .from("bookings")
+      .update({ user_id: userId })
+      .is("user_id", null)
+      .ilike("email", likeLiteral(email))
+      .select("id");
+    if (error) throw error;
+    return data.length;
+  },
 };
+
+// Asks Supabase Auth who a token belongs to. getUser checks it server side (signature,
+// expiry, and that the session wasn't revoked), unlike decoding the JWT ourselves.
+async function fromToken(token: string): Promise<AuthUser | null> {
+  const { data, error } = await admin.auth.getUser(token);
+  if (error || !data.user) return null;
+  return { id: data.user.id, email: data.user.email ?? null, emailVerified: Boolean(data.user.email_confirmed_at) };
+}
 
 export default {
   fetch: createHandler({
@@ -134,6 +157,7 @@ export default {
     bookings,
     // In the background: checkout never waits on n8n.
     forward: (event, log) => EdgeRuntime.waitUntil(automations.send(event, log)),
+    users: { fromToken },
     // Keys match `provider` in the mapping tables.
     providers: {
       boulevard: (log) => createBoulevard(boulevardConfig, log),

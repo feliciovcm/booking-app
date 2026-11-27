@@ -75,9 +75,9 @@ Great Many's vendor is **Boulevard** (confirmed). `mock-boulevard` copies a subs
 | 2 | Funnel shell: services, location, slot placeholder, free consult form | Claude | **Done**, merged to `main` |
 | 3 | Availability: `mock-boulevard` (Claude) + `_shared/log.ts`, the Boulevard adapter and the `booking` function (user) + SlotStep (Claude) | Both | **Done**, merged into `main`. Then the frontend was reorganized into layers on `refactor-layers` (see Frontend layout) |
 | 4 | Checkout: client info, card token, `checkoutCart`, our `bookings` row with idempotency key | Both | **Done**, merged into `main` (`175500f`): server deployed, UI checked in the browser |
-| 5 | `boulevard-webhook` **edge function**: HMAC check, `webhook_events`, settle `held` bookings, reschedules and cancellations, reconciliation job, an optional forward to automations | Claude (step by step, tests first) | To do (branch `step-5-webhooks`) |
-| 5b | **n8n**: self-hosted in Docker, reached through a Cloudflare quick tunnel, one ops flow fed by step 5's forward, workflow JSON in git | User (guided) | To do |
-| 6 | Auth (magic link) + "My bookings" page (RLS: own rows) | Both | To do |
+| 5 | `boulevard-webhook` **edge function**: HMAC check, `webhook_events`, settle `held` bookings, reschedules and cancellations, reconciliation job, an optional forward to automations | Claude (step by step, tests first) | **Done**, deployed 2026-11-25 (branches `step-5-webhooks`, `step-5-retries`) |
+| 5b | **n8n**: self-hosted in Docker, reached through a Cloudflare quick tunnel, one ops flow fed by step 5's forward, workflow JSON in git | User (guided) | **Done** 2026-11-27 |
+| 6 | Auth (6-digit email code) + "My bookings" page (RLS: own rows), bookings linked at checkout and claimed by verified email | Claude (step by step) | In progress |
 | 7 | **Segment**: typed `track()` with consent gate in the browser, server-side events from checkout and webhooks, event spec | Both | To do |
 | 8 | Klaviyo as a **Segment destination**: "Booking Completed" flow, reminders (Comms 2.0) | User | To do |
 | 9 | Wrap-up: CI with all checks, README, CLAUDE.md with guardrails, "playground to production" checklist and review guide, staging vs production (Boulevard sandbox, second Supabase project), secrets rules, final talking points | Claude | To do |
@@ -366,6 +366,24 @@ npx supabase test db --remote --yes
 4. **Point step 5 at it:** `supabase secrets set AUTOMATIONS_WEBHOOK_URL=... AUTOMATIONS_SECRET=...`. Cancel an appointment through the mock and watch the execution in n8n.
 5. **Version control:** export the workflow JSON into `automations/n8n/` (`docker exec n8n n8n export:workflow --all --output=/home/node/.n8n/export` or download it from the UI). Credentials are referenced, not included. Commit it.
 6. **Production notes for the interview:** Postgres instead of the default SQLite, a fixed `N8N_ENCRYPTION_KEY`, queue mode with workers to scale, git-backed workflows, an error workflow that alerts, an owner per workflow, and n8n Cloud vs self-hosting trade-offs. See INTERVIEW.md, "n8n: what to know".
+
+## Next: step 6 (auth and My bookings)
+
+**Decisions (2026-11-27):**
+- **Linking, both ways, server only:** checkout sets `user_id` when the request carries a valid user token (verified with `auth.getUser`; a bad token is a 401, never a silent guest). A `claim` action on `booking` links rows with no `user_id` whose email matches the user's **verified** email (case-insensitive, `ilike` wildcards escaped). My bookings calls it on load, so it's idempotent.
+- **Sign-in is optional:** booking stays guest-friendly. Header link, plus "See it in My bookings" on the confirmation page with the email prefilled through router state (never in the URL).
+- **6-digit email code** (`signInWithOtp` then `verifyOtp` with `type: "email"`), not a magic link: works across devices and needs no redirect allow list. Needs `{{ .Token }}` in the hosted project's Magic Link email template (dashboard, user). Default SMTP only sends to the project team's emails, with a low hourly limit: fine for the demo.
+- **My bookings reads through RLS** (the existing "Users read their own bookings" policy): confirmed and cancelled rows with treatment, clinic and local time, split into upcoming and past. `next` after sign-in only accepts in-app paths (no open redirect).
+- **Who:** Claude writes it all, step by step.
+
+**Implementation steps** (each leaves the app working; gate after each: `npm run lint`, `npm run typecheck`, `npm test`, plus the step's own tests):
+0. **Baseline:** record lint, typecheck, test and build results.
+1. **Done: server identity and linking** (baseline was 206 tests, lint and typechecks clean, build 613 kB; now 214 tests). `currentUser` in the handler: no bearer or the publishable key = guest, a token Auth rejects = 401 `SIGN_IN_AGAIN`. Only checkout and `claim` call it. `claim` answers 401 `SIGN_IN_REQUIRED` signed out and 403 `EMAIL_NOT_VERIFIED`; `claimByEmail` updates only `user_id is null` rows. `index.ts` uses `admin.auth.getUser(token)` (checks revocation, unlike decoding the JWT). The `ilike` escaper moved to `_shared/sql.ts` with tests, shared with the webhook store. Original scope: a `users.fromToken` dependency, checkout saves `userId`, the `claim` action, the Postgres `claimByEmail`. Tests: signed-in checkout links, a guest stays null, a bad token is 401, claim needs a verified email, claims only unclaimed matching rows, and is repeatable.
+2. **Frontend auth** (`api/auth.ts`, `hooks/auth.ts`, `pages/SignInPage.tsx`, header link, `api/booking.ts` sends the access token): tests for both sign-in steps, wrong code, safe `next`.
+3. **My bookings** (`api/myBookings.ts`, hook, `pages/MyBookingsPage.tsx`, signed-in-only route): tests for claim then list, upcoming vs past, empty state, signed-out redirect.
+4. **Confirmation page link** with the email in router state: test.
+5. **Deploy and dashboard** (user): Magic Link template gets `{{ .Token }}`, deploy `booking`, then a manual browser run: book as a guest, sign in with the code, see it in My bookings; book while signed in.
+6. **Final gates:** all Checks above, `npm run build`, and INTERVIEW.md notes (linking by verified email, why not a policy on email, OTP vs magic link).
 
 ## Open items and later
 - **Move to a local Supabase stack** (`supabase start`) and seed data to `seed.sql`. That includes the vendor mappings, which differ per environment (sandbox vs production Boulevard ids).

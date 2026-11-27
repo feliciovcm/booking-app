@@ -12,6 +12,11 @@
 // POST { action: "summary", sessionId }         -> { hold: { start, expiresAt } | null }
 // POST { action: "checkout", sessionId, location, service, idempotencyKey, client, cardToken }
 //                                               -> { bookingId, start }
+// POST { action: "claim" }                      -> { claimed: 2 }   signed in only
+//
+// Signed-in visitors also send `authorization: Bearer <access token>`. Checkout then saves
+// the booking as theirs, and "claim" links their earlier guest bookings by verified email.
+// Only checkout and claim look at the token; a bad one is a 401, never a silent guest.
 //
 // Errors: { error: { code, message } } with our codes (see BookingErrorCode); message is
 // safe to show the visitor.
@@ -37,7 +42,12 @@ export type BookingRow = {
   providerBookingId: string | null;
   /** The vendor's session (Boulevard: the cart), so reconciliation can ask how it ended. */
   providerSessionId: string | null;
+  /** The signed-in user it belongs to (auth.users.id); null = guest. */
+  userId: string | null;
 };
+
+/** Who an access token belongs to, as Supabase Auth says. */
+export type AuthUser = { id: string; email: string | null; emailVerified: boolean };
 
 /** The bookings table, behind an interface so tests use memory and index.ts uses Postgres. */
 export type BookingsRepo = {
@@ -46,6 +56,8 @@ export type BookingsRepo = {
   insertHeld(row: Omit<BookingRow, "id" | "status" | "providerBookingId">): Promise<BookingRow>;
   confirm(id: string, providerBookingId: string): Promise<void>;
   expire(id: string): Promise<void>;
+  /** Gives unowned bookings with this email (case-insensitive) to the user. Returns how many. */
+  claimByEmail(userId: string, email: string): Promise<number>;
 };
 
 export type Deps = {
@@ -60,6 +72,8 @@ export type Deps = {
   bookings: BookingsRepo;
   /** Tells automations (n8n) about a booking change. Must not block or throw: index.ts sends in the background. */
   forward?: (event: AutomationEvent, log: Log) => void;
+  /** Supabase Auth: the user behind an access token, or null if it isn't valid (expired, forged). */
+  users: { fromToken(token: string): Promise<AuthUser | null> };
   sink?: Sink;
 };
 
@@ -83,6 +97,7 @@ const Body = z.discriminatedUnion("action", [
   z.object({ action: z.literal("times"), sessionId, date }),
   z.object({ action: z.literal("hold"), sessionId, slotId: z.string().min(1).max(100) }),
   z.object({ action: z.literal("summary"), sessionId }),
+  z.object({ action: z.literal("claim") }),
   z.object({
     action: z.literal("checkout"),
     sessionId,
@@ -146,6 +161,19 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
     const body = parsed.data;
     fields.action = body.action;
 
+    /**
+     * Who is calling: a user, null for a guest, or "invalid" for a token Auth rejects.
+     * Signed out, supabase-js sends the publishable key as the bearer: that's a guest too.
+     */
+    const currentUser = async (): Promise<AuthUser | null | "invalid"> => {
+      const token = req.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
+      if (!token || deps.publishableKeys.includes(token)) return null;
+      const user = await deps.users.fromToken(token);
+      fields.signedIn = user ? "yes" : "invalid";
+      return user ?? "invalid";
+    };
+    const signInAgain = () => fail(401, "SIGN_IN_AGAIN", "Your sign-in expired. Please sign in again.");
+
     /** The provider and vendor session behind one of our session ids. */
     const session = (id: string) => {
       const parts = fromSessionId(id);
@@ -185,7 +213,22 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
           const { hold } = await s.provider.summary(s.id);
           return reply(200, { hold });
         }
+        case "claim": {
+          // Links earlier guest bookings to this account. Only by a verified email: otherwise
+          // signing up with someone else's address would hand you their bookings.
+          const user = await currentUser();
+          if (user === "invalid") return signInAgain();
+          if (!user) return fail(401, "SIGN_IN_REQUIRED", "Please sign in to see your bookings.");
+          if (!user.emailVerified || !user.email) return fail(403, "EMAIL_NOT_VERIFIED", "Please confirm your email first.");
+          const claimed = await deps.bookings.claimByEmail(user.id, user.email);
+          fields.claimed = String(claimed);
+          return reply(200, { claimed });
+        }
         case "checkout": {
+          // 0. Signed in? Then the booking is theirs. A bad token stops here, before any vendor call.
+          const user = await currentUser();
+          if (user === "invalid") return signInAgain();
+
           // 1. Seen this key before? Confirmed: answer from our table, no vendor call.
           //    Expired: that attempt is over; the browser makes a new key after picking a time.
           const existing = await deps.bookings.findByKey(body.idempotencyKey);
@@ -219,6 +262,7 @@ export function createHandler(deps: Deps): (req: Request) => Promise<Response> {
               slotStart: cart.hold.start, // from the vendor, never from the browser
               provider: mapping.provider,
               providerSessionId: s.id,
+              userId: user?.id ?? null,
             });
             fields.bookingId = row.id;
           }
