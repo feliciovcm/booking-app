@@ -1,4 +1,5 @@
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "../lib/supabase";
+import { authApi } from "./auth";
 
 // Client for our `booking` edge function. The browser never talks to the booking vendor
 // and never knows which one it is: it gets an opaque sessionId and our own error codes.
@@ -31,6 +32,8 @@ export const isBookingError = (error: unknown, code: BookingErrorCode) =>
   error instanceof BookingApiError && error.code === code;
 
 async function request<T>(body: Record<string, unknown>): Promise<T> {
+  // Signed in: the function links checkouts and claims to this user (it verifies the token).
+  const token = await authApi.accessToken();
   let res: Response;
   try {
     res = await fetch(`${SUPABASE_URL}/functions/v1/booking`, {
@@ -40,6 +43,7 @@ async function request<T>(body: Record<string, unknown>): Promise<T> {
         "content-type": "application/json",
         // Follows this request through our logs and the vendor's.
         "x-request-id": crypto.randomUUID(),
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),
     });

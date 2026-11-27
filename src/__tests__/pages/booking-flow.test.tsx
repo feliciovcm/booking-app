@@ -13,10 +13,12 @@ const fake = vi.hoisted(() => ({
   selectAfterInsert: 0,
 }));
 
-vi.mock("../../lib/supabase", () => ({
+vi.mock("../../lib/supabase", async () => ({
   SUPABASE_URL: "https://test.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
   supabase: {
+    // Signed out: the header reads the session.
+    auth: (await import("../helpers/fake-auth")).fakeAuth,
     from: (table: string) => ({
       select: () => ({
         order: async () =>

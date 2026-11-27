@@ -6,10 +6,12 @@ import { renderAt } from "../helpers/render";
 
 // Catalog reads come from a fake supabase client; booking calls and the card tokenizer go
 // to fakes behind global fetch.
-vi.mock("../../lib/supabase", () => ({
+vi.mock("../../lib/supabase", async () => ({
   SUPABASE_URL: "https://test.supabase.co",
   SUPABASE_PUBLISHABLE_KEY: "sb_publishable_test",
   supabase: {
+    // Signed out: the header reads the session.
+    auth: (await import("../helpers/fake-auth")).fakeAuth,
     from: (table: string) => ({
       select: () => ({
         order: async () => ({

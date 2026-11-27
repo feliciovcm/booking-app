@@ -31,6 +31,10 @@ button, input, textarea { font: inherit; }
   width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center;
   font-size: 1.25rem; color: inherit; text-decoration: none;
 }
+.header-action {
+  min-width: 40px; font-size: 0.9rem; color: var(--accent); text-decoration: none;
+  background: none; border: 0; padding: 0; cursor: pointer;
+}
 .progress { height: 3px; background: var(--border); margin: 0 16px; }
 .progress div { height: 100%; background: var(--accent); transition: width 0.3s; }
 .content { padding: 8px 16px 48px; }

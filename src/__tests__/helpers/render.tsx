@@ -4,12 +4,15 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router";
 import App from "../../App";
 
 // Renders the real routes at a URL, with a fresh query cache and no retries,
-// and exposes the current URL so tests can assert on navigation.
-export function renderAt(url: string) {
+// and exposes the current URL so tests can assert on navigation. `state` is router
+// state, as a <Link state> or navigate(..., { state }) would pass it.
+export function renderAt(url: string, state?: unknown) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const at = url.indexOf("?"); // the first "?" only: a ?next= value can contain its own
+  const [pathname, search] = at === -1 ? [url, ""] : [url.slice(0, at), url.slice(at)];
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[url]}>
+      <MemoryRouter initialEntries={[{ pathname, search, state }]}>
         <App />
         <Routes>
           <Route path="*" element={<CurrentUrl />} />

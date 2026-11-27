@@ -1,4 +1,5 @@
 import { Link, Outlet, useLocation } from "react-router";
+import { AuthNav } from "../components/AuthNav";
 import { useFunnel } from "../hooks/funnel";
 import { FUNNEL_STEPS, stepIndex, stepUrl, type FunnelStep } from "../routes/funnel";
 
@@ -31,7 +32,7 @@ export function BookingLayout() {
         <Link to="/book/services" className="brand">
           Great Many <small>demo</small>
         </Link>
-        <span className="back" />
+        <AuthNav />
       </header>
       <div className="progress" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}>
         <div style={{ width: `${progress}%` }} />
