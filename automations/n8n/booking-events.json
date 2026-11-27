@@ -1,0 +1,248 @@
+{
+  "updatedAt": "2026-11-27T08:12:35.964Z",
+  "createdAt": "2026-11-25T08:26:44.589Z",
+  "id": "BcxWp2zVT3mJ5FVP",
+  "name": "Booking events",
+  "description": null,
+  "active": false,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "booking-events",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "46813c18-089c-42ea-8455-471d5d0233ae",
+      "name": "Webhook",
+      "webhookId": "a08d1b03-fcc3-4d92-8dbe-8238eff240e1",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "dIhdG8zNjlLSL8y3",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "booking.cancelled",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "c56634b2-1e1b-4f9f-afbc-8fa08aadfc19"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cancelled"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "ffdbb85b-f515-4b40-b062-4e66e73f7eb3",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "alert.",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "alert"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "909b245d-bd71-4e5c-a3b8-0dcb5be0afdf",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "booking.confirmed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "confirmed"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 4
+                },
+                "conditions": [
+                  {
+                    "id": "010fa5fb-44a3-449d-8036-afec71b7b18a",
+                    "leftValue": "={{ $json.body.type }}",
+                    "rightValue": "booking.rescheduled",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "rescheduled"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "none"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "6ecaaf85-6e19-46a2-bab4-3aa182c64599",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aa55fedf-fb80-424c-8d7b-42726ca2d21f",
+              "name": "message",
+              "value": "=Cancelled: booking {{ $json.body.bookingId }} at {{ $json.body.location }} ({{ $json.body.treatment }}), {{ DateTime.fromISO($json.body.start).setZone('America/New_York').toFormat('ccc d LLL, h:mm a') }}. Call the patient to offer a new time.",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        -208
+      ],
+      "id": "9ee1c98d-60cc-4093-8c4c-2bca238d58b9",
+      "name": "Cancellation message"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "58bc60bd-37bb-4629-822c-293f91968237",
+              "name": "message",
+              "value": "=Ops alert {{ $json.body.type }}: {{ JSON.stringify($json.body) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        624,
+        -48
+      ],
+      "id": "421e7b14-055d-4589-95cc-f9675eac2d8d",
+      "name": "Ops alert"
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Cancellation message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ops alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "nodeGroups": [],
+  "pinData": {},
+  "versionId": "eff3b4f6-9518-49aa-8a98-109912596c43",
+  "activeVersionId": null,
+  "versionCounter": 42,
+  "triggerCount": 0,
+  "sourceWorkflowId": null,
+  "tags": [],
+  "versionMetadata": {
+    "name": null,
+    "description": null
+  }
+}

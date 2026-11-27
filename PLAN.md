@@ -331,7 +331,24 @@ npx supabase test db --remote --yes
 5. **Checks:** `npm run db:test` (both pgTAP files), then `bash scripts/smoke-booking.sh`, `bash scripts/smoke-mock-boulevard.sh` and `bash scripts/smoke-webhooks.sh`.
 6. **After 5 minutes,** confirm the schedule runs: `select status, return_message, start_time from cron.job_run_details order by start_time desc limit 5;` and `select status_code, timed_out, error_msg, created from net._http_response order by created desc limit 5;` (expect `succeeded` and `202`), and the function logs show "jobs finished".
 
-## Next: step 5b (n8n, self-hosted)
+## Step 5b (n8n, self-hosted): done 2026-11-27
+
+**Result:** a real chain works end to end. `smoke-webhooks.sh` books, the mock's "staff" reschedule then cancel, and n8n shows three runs (confirmed, rescheduled, cancelled); the cancellation becomes a message in the clinic's local time, using the rescheduled start. The workflow is in `automations/n8n/booking-events.json` (no secret, no tunnel URL, owner block removed) with an import guide in `automations/n8n/README.md`.
+
+**Decisions:** quick tunnel (no domain to buy; the named tunnel plus Cloudflare Access is the production answer, in INTERVIEW.md), self-hosted rather than n8n Cloud (free, no trial clock, the setup was the point), and no external notifier: messages are read in the Executions list (swap in Slack or Discord with one node).
+
+**Restart routine** (the quick tunnel URL changes every time):
+1. Start Docker Desktop.
+2. Tab A: `cloudflared tunnel --url http://localhost:5678`, then copy the new URL.
+3. Tab B: `docker run -it --rm --name n8n -p 5678:5678 -v n8n_data:/home/node/.n8n -e WEBHOOK_URL=<url>/ -e N8N_PROXY_HOPS=1 -e GENERIC_TIMEZONE=America/New_York docker.n8n.io/n8nio/n8n`
+4. `npx supabase secrets set AUTOMATIONS_WEBHOOK_URL=<url>/webhook/booking-events`. Until then, events are logged as "automation not delivered" and lost (by design: one try).
+
+**Lessons from the setup:**
+- Keep shared secrets in a file (`AUTOMATIONS_SECRET` in the ignored `supabase/functions/.env`), not the clipboard: copying a command afterwards replaced the secret, and n8n answered "Authorization data is wrong!".
+- Test URLs (`/webhook-test/`) take one call per "Execute workflow" click; production URLs (`/webhook/`) need the workflow active and log runs under Executions.
+- A 404 after the auth fix meant "not listening", not "wrong secret": auth passed.
+
+### Original plan
 
 **Goal:** learn n8n by running it locally and building one real ops flow on top of step 5's forward.
 
