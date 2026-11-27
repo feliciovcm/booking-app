@@ -65,4 +65,6 @@ export const bookingApi = {
   summary: (sessionId: string) => request<{ hold: Hold | null }>({ action: "summary", sessionId }),
   checkout: (input: { sessionId: string; location: string; service: string; idempotencyKey: string; client: Client; cardToken: string }) =>
     request<Booking>({ action: "checkout", ...input }),
+  /** Signed in only: links earlier guest bookings made with the user's verified email. */
+  claim: () => request<{ claimed: number }>({ action: "claim" }),
 };

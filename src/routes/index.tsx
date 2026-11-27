@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router";
 import { AccountLayout } from "../layouts/AccountLayout";
 import { BookingLayout } from "../layouts/BookingLayout";
+import { MyBookingsPage } from "../pages/account/MyBookingsPage";
 import { SignInPage } from "../pages/account/SignInPage";
 import { CheckoutStep } from "../pages/booking/CheckoutStep";
 import { ConfirmedPage } from "../pages/booking/ConfirmedPage";
@@ -22,6 +23,7 @@ export function AppRoutes() {
       </Route>
       <Route element={<AccountLayout />}>
         <Route path="sign-in" element={<SignInPage />} />
+        <Route path="my-bookings" element={<MyBookingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/book/services" replace />} />
     </Routes>

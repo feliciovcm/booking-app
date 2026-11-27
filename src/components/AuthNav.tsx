@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router";
 import { useSession, useSignOut } from "../hooks/auth";
 
-/** The header's right slot: sign in (and come back here), or sign out. */
+/** The header's right slot: sign in (and come back here), or My bookings and sign out. */
 export function AuthNav() {
   const { pathname, search } = useLocation();
   const { session, loading } = useSession();
@@ -16,8 +16,13 @@ export function AuthNav() {
     );
   }
   return (
-    <button className="header-action" type="button" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
-      Sign out
-    </button>
+    <span className="header-actions">
+      <Link className="header-action" to="/my-bookings">
+        My bookings
+      </Link>
+      <button className="header-action" type="button" onClick={() => signOut.mutate()} disabled={signOut.isPending}>
+        Sign out
+      </button>
+    </span>
   );
 }

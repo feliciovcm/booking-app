@@ -1,5 +1,5 @@
 import type { Session } from "@supabase/supabase-js";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { authApi } from "../api/auth";
 
@@ -29,4 +29,8 @@ export const useSendCode = () => useMutation({ mutationFn: (email: string) => au
 export const useVerifyCode = () =>
   useMutation({ mutationFn: ({ email, code }: { email: string; code: string }) => authApi.verifyCode(email, code) });
 
-export const useSignOut = () => useMutation({ mutationFn: () => authApi.signOut() });
+export function useSignOut() {
+  const queryClient = useQueryClient();
+  // Drop the signed-in user's data from the cache, so the next person on this device can't see it.
+  return useMutation({ mutationFn: () => authApi.signOut(), onSuccess: () => queryClient.removeQueries({ queryKey: ["my-bookings"] }) });
+}

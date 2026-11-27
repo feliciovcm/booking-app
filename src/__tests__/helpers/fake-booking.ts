@@ -18,6 +18,8 @@ export function installFakeBooking() {
     /** Bookings by idempotency key: the same key returns the same booking. */
     bookings: {} as Record<string, { bookingId: string; start: string }>,
     sessions: 0,
+    /** What claim answers: how many guest bookings it linked. */
+    claimed: 0,
     dates: ["2026-11-25", "2026-11-26"],
     times: {
       "2026-11-25": [
@@ -65,6 +67,8 @@ export function installFakeBooking() {
         state.bookings[key] ??= { bookingId: `bk${Object.keys(state.bookings).length + 1}`, start: state.hold!.start };
         return json(200, state.bookings[key]);
       }
+      case "claim":
+        return json(200, { claimed: state.claimed });
       default:
         return error(400, "INVALID_REQUEST", "Bad request");
     }
