@@ -86,8 +86,11 @@ export function CheckoutStep() {
     checkout.mutate(
       { client: { firstName, lastName, email, ...(phone ? { phone } : {}) }, cardToken },
       {
+        // The email rides in router state (for "See it in My bookings"), never in the URL.
         onSuccess: (booking) =>
-          navigate(`/book/confirmed?${new URLSearchParams({ service: params.service!, location: params.location!, at: booking.start })}`),
+          navigate(`/book/confirmed?${new URLSearchParams({ service: params.service!, location: params.location!, at: booking.start })}`, {
+            state: { email },
+          }),
       },
     );
   }

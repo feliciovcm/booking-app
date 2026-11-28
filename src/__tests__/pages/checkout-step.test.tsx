@@ -1,6 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeAuth } from "../helpers/fake-auth";
 import { installFakeBooking } from "../helpers/fake-booking";
 import { renderAt } from "../helpers/render";
 
@@ -35,6 +36,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-11-24T15:00:00Z")); // 10:00 AM in New York, the hold lapses at 10:30
   sessionStorage.clear();
+  fakeAuth.reset();
   fake = installFakeBooking();
 });
 
@@ -115,6 +117,32 @@ describe("CheckoutStep", () => {
     expect(url()).toBe("/book/confirmed?service=prp&location=noho&at=2026-11-25T14%3A00%3A00.000Z");
     // The booking is done: its session and key are gone, so the next booking starts clean.
     expect(sessionStorage.length).toBe(0);
+  });
+
+  it("offers My bookings after a guest booking, carrying the email to sign-in but never in the URL", async () => {
+    renderAt(CHECKOUT_URL);
+    await screen.findByRole("form", { name: "Checkout" });
+    await fillForm();
+    await book();
+
+    await userEvent.click(await screen.findByRole("link", { name: "See it in My bookings" }));
+    await waitFor(() => expect(url()).toBe("/sign-in?next=%2Fmy-bookings"));
+    expect(await screen.findByLabelText(/^Email/)).toHaveValue("avery.quinn@example.com");
+  });
+
+  it("links straight to My bookings when already signed in", async () => {
+    fakeAuth.signInAs("avery.quinn@example.com");
+    renderAt(CHECKOUT_URL);
+    await screen.findByRole("form", { name: "Checkout" });
+    await fillForm();
+    await book();
+    expect(await screen.findByRole("link", { name: "See it in My bookings" })).toHaveAttribute("href", "/my-bookings");
+  });
+
+  it("still offers the link after a refresh, just without the email (state doesn't survive one)", async () => {
+    renderAt("/book/confirmed?service=prp&location=noho&at=2026-11-25T14%3A00%3A00.000Z");
+    await userEvent.click(await screen.findByRole("link", { name: "See it in My bookings" }));
+    expect(await screen.findByLabelText(/^Email/)).toHaveValue("");
   });
 
   it("works without a phone", async () => {
